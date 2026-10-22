@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from conftest import body
@@ -40,10 +42,10 @@ def test_workspace_aliases(monkeypatch):
 async def test_send_message_posts_as_user(slack, call_tool):
     slack.on("chat.postMessage", {"ok": True, "ts": "1.2", "channel": "C1"})
     out = await call_tool("slack_send_message", workspace="ACME", channel_id="C1", text="hi", thread_ts="1.0")
-    assert out == "sent workspace=acme ts=1.2 channel=C1"
+    assert json.loads(out) == {"workspace": "acme", "channel": "C1", "ts": "1.2"}
     (req,) = slack.calls("chat.postMessage")
     assert req.headers["authorization"] == "Bearer xoxp-test"
-    assert body(req) == {"channel": "C1", "text": "hi", "thread_ts": "1.0"}
+    assert body(req) == {"channel": "C1", "markdown_text": "hi", "thread_ts": "1.0", "unfurl_links": False}
 
 
 async def test_style_gate_refuses_before_sending(slack, call_tool):
@@ -56,7 +58,7 @@ async def test_style_gate_off(slack, call_tool, monkeypatch):
     monkeypatch.setenv("SLACK_STYLE_GATE", "off")
     slack.on("chat.postMessage", {"ok": True, "ts": "1.2", "channel": "C1"})
     out = await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="Great question — sure")
-    assert out.startswith("sent")
+    assert json.loads(out)["ts"] == "1.2"
 
 
 async def test_unknown_workspace(slack, call_tool):
@@ -93,7 +95,7 @@ async def test_upload_into_user_dm(slack, call_tool, tmp_path):
     slack.on("https://files.slack.com/upload/v1/x", lambda r: httpx.Response(200, text="OK"))
     slack.on("files.completeUploadExternal", {"ok": True, "files": [{"id": "F1"}]})
     out = await call_tool("slack_upload_file", workspace="acme", channel_id="U1", file_path=str(path))
-    assert out == "uploaded workspace=acme file_id=F1 name=report.txt channel=D1"
+    assert json.loads(out) == {"workspace": "acme", "file_id": "F1", "name": "report.txt", "channel": "D1"}
     assert b"channel_id=D1" in slack.calls("files.completeUploadExternal")[0].content
 
 
@@ -104,4 +106,4 @@ async def test_download(slack, call_tool, tmp_path):
     slack.on("https://files.slack.com/d/a.txt", lambda r: httpx.Response(200, content=b"abc"))
     out = await call_tool("slack_download_file", workspace="acme", file_id="F1", dest_dir=str(tmp_path))
     assert (tmp_path / "F1-a.txt").read_bytes() == b"abc"
-    assert out.endswith(f"path={tmp_path / 'F1-a.txt'}")
+    assert json.loads(out)["path"] == str(tmp_path / "F1-a.txt")

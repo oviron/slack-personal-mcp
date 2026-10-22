@@ -172,6 +172,12 @@ def resolve_channel(workspace: str, channel_id: str) -> str:
     return channel_id
 
 
+def write_target(workspace: str, channel_id: str) -> str:
+    """Check SLACK_WRITE_CHANNELS, then turn a user id into the DM with that user."""
+    check_write_target(channel_id)
+    return resolve_channel(workspace, channel_id)
+
+
 def check_write_target(channel_id: str) -> None:
     """Refuse a write outside SLACK_WRITE_CHANNELS when it is set. A DM by user id needs that U... listed."""
     allowed = write_channels()

@@ -1,0 +1,198 @@
+import json
+import os
+
+import httpx
+import pytest
+from conftest import body
+from mcp.server.fastmcp.exceptions import ToolError
+
+pytestmark = pytest.mark.anyio
+
+UPLOAD_URL = "https://files.slack.com/upload/v1/x"
+FILE_URL = "https://files.slack.com/d/a.txt"
+
+
+@pytest.fixture
+def upload_routes(slack):
+    slack.on("files.getUploadURLExternal", {"ok": True, "upload_url": UPLOAD_URL, "file_id": "F1"})
+    slack.on(UPLOAD_URL, lambda r: httpx.Response(200, text="OK"))
+    slack.on("files.completeUploadExternal", {"ok": True, "files": [{"id": "F1"}]})
+    return slack
+
+
+def upload(call_tool, path, **kw):
+    return call_tool("slack_upload_file", workspace="acme", channel_id="C1", file_path=str(path), **kw)
+
+
+@pytest.fixture
+def secret(tmp_path):
+    (tmp_path / ".ssh").mkdir()
+    path = tmp_path / ".ssh" / "id_ed25519"
+    path.write_text("key")
+    return path
+
+
+async def test_upload_refuses_hidden_files_even_through_symlinks(slack, call_tool, tmp_path, secret):
+    link = tmp_path / "innocent.txt"
+    link.symlink_to(secret)
+    for path in (secret, link):
+        with pytest.raises(ToolError, match="hidden"):
+            await upload(call_tool, path)
+    assert slack.requests == []
+
+
+async def test_upload_refuses_paths_outside_roots(slack, call_tool, tmp_path, monkeypatch):
+    (tmp_path / "ok").mkdir()
+    (tmp_path / "ok" / "a.txt").write_text("x")
+    (tmp_path / "b.txt").write_text("x")
+    monkeypatch.setenv("SLACK_FILE_ROOTS", str(tmp_path / "ok"))
+    with pytest.raises(ToolError, match="outside SLACK_FILE_ROOTS"):
+        await upload(call_tool, tmp_path / "b.txt")
+    with pytest.raises(ToolError, match="absolute"):
+        await upload(call_tool, "b.txt")
+    with pytest.raises(ToolError, match="regular file"):
+        await upload(call_tool, tmp_path / "ok")
+    assert slack.requests == []
+
+
+async def test_upload_refuses_library_by_default(slack, call_tool, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Library").mkdir()
+    (tmp_path / "Library" / "cookies").write_text("x")
+    with pytest.raises(ToolError, match="Library"):
+        await upload(call_tool, tmp_path / "Library" / "cookies")
+
+
+async def test_upload_title_goes_through_style_gate(slack, call_tool, tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    with pytest.raises(ToolError, match="rewrite the title"):
+        await upload(call_tool, tmp_path / "a.txt", title="Report — final")
+    assert slack.requests == []
+
+
+async def test_upload_failure_names_the_stage(upload_routes, call_tool, tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    upload_routes.on(UPLOAD_URL, lambda r: httpx.Response(500))
+    with pytest.raises(ToolError, match="while sending bytes .HTTP 500.; nothing was shared. file_id='F1'"):
+        await upload(call_tool, tmp_path / "a.txt")
+    assert upload_routes.calls("files.completeUploadExternal") == []
+
+
+async def test_upload_share_failures(upload_routes, call_tool, tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    upload_routes.on("files.completeUploadExternal", lambda r: httpx.Response(502, text="bad"))
+    with pytest.raises(ToolError, match="may have been applied.*file_id='F1'"):
+        await upload(call_tool, tmp_path / "a.txt")
+    upload_routes.on("files.completeUploadExternal", {"ok": False, "error": "not_in_channel"})
+    with pytest.raises(ToolError, match="not_in_channel; the file was uploaded but not shared"):
+        await upload(call_tool, tmp_path / "a.txt")
+
+
+async def test_upload_with_empty_files_reply(upload_routes, call_tool, tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    upload_routes.on("files.completeUploadExternal", {"ok": True, "files": []})
+    assert json.loads(await upload(call_tool, tmp_path / "a.txt"))["file_id"] == "F1"
+
+
+def download(call_tool, tmp_path, **kw):
+    return call_tool("slack_download_file", workspace="acme", file_id="F1", dest_dir=str(tmp_path), **kw)
+
+
+def file_info(slack, **fields):
+    slack.on("files.info", {"ok": True, "file": {"name": "a.txt", "url_private_download": FILE_URL} | fields})
+
+
+async def test_download_keeps_old_copy_when_transfer_is_short(slack, call_tool, tmp_path):
+    (tmp_path / "F1-a.txt").write_bytes(b"old")
+    file_info(slack, size=10)
+    slack.on(FILE_URL, lambda r: httpx.Response(200, content=b"abc"))
+    with pytest.raises(ToolError, match="incomplete: got 3 of 10 bytes"):
+        await download(call_tool, tmp_path)
+    assert (tmp_path / "F1-a.txt").read_bytes() == b"old"
+    assert os.listdir(tmp_path) == ["F1-a.txt"]
+
+
+async def test_download_refuses_login_page(slack, call_tool, tmp_path):
+    file_info(slack)
+    slack.on(FILE_URL, lambda r: httpx.Response(200, text="<html>", headers={"content-type": "text/html"}))
+    with pytest.raises(ToolError, match="text/html"):
+        await download(call_tool, tmp_path)
+    assert os.listdir(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "url", ["http://files.slack.com/a", "https://evil.example/a", "https://slack.com.evil.example/a"]
+)
+async def test_download_sends_token_only_to_slack(slack, call_tool, tmp_path, url):
+    slack.on("files.info", {"ok": True, "file": {"name": "a", "url_private": url}})
+    with pytest.raises(ToolError, match="Refusing to send the token"):
+        await download(call_tool, tmp_path)
+    assert len(slack.requests) == 1
+
+
+async def test_download_external_file_is_not_fetched(slack, call_tool, tmp_path):
+    slack.on("files.info", {"ok": True, "file": {"is_external": True, "external_url": "https://docs.example/x"}})
+    out = json.loads(await download(call_tool, tmp_path))
+    assert out == {"file_id": "F1", "external_url": "https://docs.example/x", "downloaded": False}
+
+
+async def test_download_refuses_hidden_destination(slack, call_tool, tmp_path):
+    file_info(slack)
+    with pytest.raises(ToolError, match="hidden"):
+        await call_tool("slack_download_file", workspace="acme", file_id="F1", dest_dir=str(tmp_path / ".config"))
+    assert not (tmp_path / ".config").exists()
+
+
+async def test_file_info_lists_shares(slack, call_tool):
+    shares = {"public": {"C1": [{"ts": "1.0", "thread_ts": "0.5"}]}, "private": {"G1": [{"ts": "2.0"}]}}
+    slack.on("files.info", {"ok": True, "file": {"id": "F1", "mode": "hosted", "shares": shares}})
+    out = json.loads(await call_tool("slack_file_info", workspace="acme", file_id="F1"))
+    assert out["shares"] == [{"channel": "C1", "ts": "1.0", "thread_ts": "0.5"}, {"channel": "G1", "ts": "2.0"}]
+    assert out["mode"] == "hosted" and "external_url" not in out
+
+
+async def test_list_files_pages(slack, call_tool):
+    slack.on("files.list", {"ok": True, "files": [{"id": "F1"}], "paging": {"page": 2, "pages": 3, "total": 41}})
+    out = json.loads(await call_tool("slack_list_files", workspace="acme", page=2))
+    assert (out["page"], out["pages"], out["total"]) == (2, 3, 41)
+    assert slack.requests[0].url.params["page"] == "2"
+
+
+async def test_send_formats_and_broadcast(slack, call_tool):
+    slack.on("chat.postMessage", {"ok": True, "ts": "1", "channel": "C1"})
+    await call_tool(
+        "slack_send_message",
+        workspace="acme",
+        channel_id="C1",
+        text="*hi*",
+        format="mrkdwn",
+        thread_ts="0.5",
+        reply_broadcast=True,
+        unfurl_links=True,
+    )
+    assert body(slack.requests[0]) == {
+        "channel": "C1",
+        "text": "*hi*",
+        "thread_ts": "0.5",
+        "reply_broadcast": True,
+        "unfurl_links": True,
+    }
+    with pytest.raises(ToolError, match="needs thread_ts"):
+        await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="hi", reply_broadcast=True)
+    with pytest.raises(ToolError, match="markdown or mrkdwn"):
+        await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="hi", format="html")
+
+
+async def test_send_and_react_by_user_id_go_to_the_dm(slack, call_tool):
+    slack.on("conversations.open", {"ok": True, "channel": {"id": "D1"}})
+    slack.on("chat.postMessage", {"ok": True, "ts": "1", "channel": "D1"})
+    slack.on("reactions.add", {"ok": True})
+    await call_tool("slack_send_message", workspace="acme", channel_id="U1", text="hi")
+    await call_tool("slack_add_reaction", workspace="acme", channel_id="U1", ts="1", name=":eyes:")
+    assert body(slack.calls("chat.postMessage")[0])["channel"] == "D1"
+    assert body(slack.calls("reactions.add")[0]) == {"channel": "D1", "timestamp": "1", "name": "eyes"}
+
+
+async def test_lint_is_structured(call_tool):
+    out = json.loads(await call_tool("slack_lint", text="hi"))
+    assert out == {"clean": True, "errors": [], "warnings": []}

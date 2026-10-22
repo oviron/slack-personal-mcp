@@ -106,12 +106,14 @@ async def test_list_workspaces_reports_each_workspace(slack, call_tool, monkeypa
 async def test_send_reports_slack_warnings(slack, call_tool):
     slack.on("chat.postMessage", {"ok": True, "ts": "1.2", "channel": "C1", "warning": "message_truncated"})
     out = await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="hi")
-    assert out.endswith("warnings=message_truncated")
+    assert '"warnings": [\n    "message_truncated"' in out
 
 
 async def test_send_refuses_text_slack_would_truncate(slack, call_tool):
-    with pytest.raises(ToolError, match="truncates"):
-        await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="a" * 40_001)
+    with pytest.raises(ToolError, match="up to 40000 as mrkdwn"):
+        await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="a" * 40_001, format="mrkdwn")
+    with pytest.raises(ToolError, match="up to 12000 as markdown"):
+        await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="a" * 12_001)
     assert slack.requests == []
 
 

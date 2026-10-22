@@ -2,10 +2,11 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from .app import tool
 from .config import style_gate_enabled
-from .slack import call, check_write_target, warnings, workspace_key
+from .slack import call, warnings, workspace_key, write_target
 from .style import check, format_violations
 
 MAX_TEXT = 40_000  # Slack truncates longer text
+MAX_MARKDOWN = 12_000  # markdown_text limit
 
 
 def enforce_style(text: str, allow_promise: bool, what: str = "the text") -> None:
@@ -17,18 +18,16 @@ def enforce_style(text: str, allow_promise: bool, what: str = "the text") -> Non
         raise ToolError(f"REFUSED - rewrite {what} before sending.\n" + format_violations(result, allow_promise))
 
 
-def with_warnings(line: str, data: dict) -> str:
+def with_warnings(out: dict, data: dict) -> dict:
     found = warnings(data)
-    return f"{line} warnings={','.join(found)}" if found else line
+    return out | {"warnings": found} if found else out
 
 
 @tool(write=False, local=True)
-def slack_lint(text: str) -> str:
-    """Dry-run the style gate on a draft without sending. Returns OK or the violations."""
+def slack_lint(text: str) -> dict:
+    """Dry-run the style gate on a draft without sending. clean=true means it would pass."""
     result = check(text)
-    if not result["errors"] and not result["warnings"]:
-        return "OK - clean"
-    return format_violations(result, allow_promise=False)
+    return {"clean": not result["errors"] and not result["warnings"], **result}
 
 
 @tool(write=True)
@@ -37,50 +36,60 @@ def slack_send_message(
     channel_id: str,
     text: str,
     thread_ts: str = "",
+    reply_broadcast: bool = False,
+    format: str = "markdown",
+    unfurl_links: bool = False,
     allow_promise: bool = False,
-) -> str:
+) -> dict:
     """Post a Slack message AS THE USER (no app badge), via personal user token.
     Style gate (enforced before send unless SLACK_STYLE_GATE=off): no AI typography
     (em/en dash, ellipsis char, curly quotes, nbsp, bullet) - use plain ASCII; no AI-slop
     phrases; no concrete promises/deadlines unless allow_promise=true. Write short and
     plain, in the user's own voice and language.
-    workspace: explicit alias from slack_list_workspaces. channel_id: channel/DM id
-    (e.g. C..., D...). thread_ts: reply in a thread if set.
+    workspace: explicit alias from slack_list_workspaces. channel_id: C.../G.../D..., or a user
+    id U... to write into the DM with that person (needs im:write).
+    thread_ts: reply in a thread. reply_broadcast: with thread_ts, also show the reply in the channel.
+    format: markdown (default; standard Markdown, up to 12,000 chars) or mrkdwn (Slack's own:
+    *bold*, <url|label>). unfurl_links: show link previews (off by default).
     """
-    if len(text) > MAX_TEXT:
-        raise ToolError(f"Text is {len(text)} characters; Slack truncates past {MAX_TEXT}. Split it or upload a file.")
+    if format not in ("markdown", "mrkdwn"):
+        raise ToolError(f"format must be markdown or mrkdwn, not {format!r}")
+    limit = MAX_MARKDOWN if format == "markdown" else MAX_TEXT
+    if len(text) > limit:
+        raise ToolError(
+            f"Text is {len(text)} characters; Slack takes up to {limit} as {format}. Split it or upload a file."
+        )
+    if reply_broadcast and not thread_ts:
+        raise ToolError("reply_broadcast needs thread_ts")
     enforce_style(text, allow_promise)
-    check_write_target(channel_id)
-    body: dict = {"channel": channel_id, "text": text}
+    channel = write_target(workspace, channel_id)
+    body: dict = {"channel": channel, "unfurl_links": unfurl_links}
+    body["markdown_text" if format == "markdown" else "text"] = text
     if thread_ts:
         body["thread_ts"] = thread_ts
+        if reply_broadcast:
+            body["reply_broadcast"] = True
     data = call("chat.postMessage", workspace=workspace, json_body=body)
-    return with_warnings(f"sent workspace={workspace_key(workspace)} ts={data['ts']} channel={data['channel']}", data)
+    out = {"workspace": workspace_key(workspace), "channel": data["channel"], "ts": data["ts"]}
+    return with_warnings(out, data)
+
+
+def _react(method: str, workspace: str, channel_id: str, ts: str, name: str) -> dict:
+    name = name.strip().strip(":")
+    channel = write_target(workspace, channel_id)
+    call(method, workspace=workspace, json_body={"channel": channel, "timestamp": ts, "name": name})
+    return {"workspace": workspace_key(workspace), "channel": channel, "ts": ts, "name": name}
 
 
 @tool(write=True, idempotent=True)
-def slack_add_reaction(workspace: str, channel_id: str, ts: str, name: str) -> str:
+def slack_add_reaction(workspace: str, channel_id: str, ts: str, name: str) -> dict:
     """Add an emoji reaction to a message AS THE USER (reactions.add, needs reactions:write).
-    ts: the message timestamp. name: emoji name without colons, e.g. eyes.
+    channel_id: as in slack_send_message. ts: the message timestamp. name: emoji name without colons, e.g. eyes.
     """
-    name = name.strip().strip(":")
-    check_write_target(channel_id)
-    call(
-        "reactions.add",
-        workspace=workspace,
-        json_body={"channel": channel_id, "timestamp": ts, "name": name},
-    )
-    return f"reacted workspace={workspace_key(workspace)} channel={channel_id} ts={ts} name={name}"
+    return _react("reactions.add", workspace, channel_id, ts, name)
 
 
 @tool(write=True, idempotent=True, destructive=True)
-def slack_remove_reaction(workspace: str, channel_id: str, ts: str, name: str) -> str:
+def slack_remove_reaction(workspace: str, channel_id: str, ts: str, name: str) -> dict:
     """Remove the user's emoji reaction from a message (reactions.remove, needs reactions:write)."""
-    name = name.strip().strip(":")
-    check_write_target(channel_id)
-    call(
-        "reactions.remove",
-        workspace=workspace,
-        json_body={"channel": channel_id, "timestamp": ts, "name": name},
-    )
-    return f"unreacted workspace={workspace_key(workspace)} channel={channel_id} ts={ts} name={name}"
+    return _react("reactions.remove", workspace, channel_id, ts, name)
