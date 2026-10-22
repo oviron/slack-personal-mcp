@@ -9,11 +9,11 @@ and AI-slop before sending.
 ## Tools
 
 - `slack_list_workspaces()` - list configured aliases and verify their Slack identity
-- `slack_send_message(workspace, channel_id, text, thread_ts?, allow_promise?)` - post as the user; style gate enforced
-- `slack_upload_file(workspace, channel_id, file_path, initial_comment?, title?, thread_ts?, allow_promise?)` - upload a local file as the user (`channel_id` may be a user id `U...` for that DM, `thread_ts` for a thread reply); style gate applies to the comment
-- `slack_file_info(workspace, file_id)` - file metadata: name, type, size, owner, where shared
-- `slack_list_files(workspace, channel_id?, user_id?, types?, count?)` - files in a channel or by uploader, newest first
-- `slack_download_file(workspace, file_id, dest_dir?)` - save a file locally (default `~/Downloads/slack`), returns the path
+- `slack_send_message(workspace, channel_id, text, thread_ts?, reply_broadcast?, format?, unfurl_links?, allow_promise?)` - post as the user; style gate enforced. `format` is `markdown` (default, standard Markdown up to 12,000 characters) or `mrkdwn`; link previews are off unless `unfurl_links=true`
+- `slack_upload_file(workspace, channel_id, file_path, initial_comment?, title?, thread_ts?, allow_promise?)` - upload a local file as the user (`thread_ts` for a thread reply); style gate applies to the comment and title. On failure the error names the step and the `file_id`
+- `slack_file_info(workspace, file_id)` - file metadata: name, type, size, owner, mode, every message that shares it, `external_url` for external files
+- `slack_list_files(workspace, channel_id?, user_id?, types?, count?, page?)` - files in a channel or by uploader, newest first, with page count
+- `slack_download_file(workspace, file_id, dest_dir?)` - save a file locally (default `~/Downloads/slack`), returns the path. Writes to a temporary file and replaces the old copy only after the size matches; external files return their `external_url` instead
 - `slack_add_reaction(workspace, channel_id, ts, name)` - react to a message as the user (`name` without colons, e.g. `eyes`)
 - `slack_remove_reaction(workspace, channel_id, ts, name)` - remove that reaction
 - `slack_lint(text)` - dry-run the style gate on a draft
@@ -24,6 +24,14 @@ and AI-slop before sending.
 - `slack_find_channel(workspace, query, limit?)`
 
 Read and search results list message attachments under `files` (id, name, type, size).
+
+In every writing tool `channel_id` may be a user id `U...`: the message, file or reaction
+goes to the DM with that person (needs `im:write`).
+
+`slack_upload_file` reads and `slack_download_file` writes only inside `SLACK_FILE_ROOTS`
+(default: home and the temp folders). Hidden files and folders such as `~/.ssh` or `.env`,
+and `~/Library` under the default roots, are refused, symlinks included. The client still
+asks you to approve each upload: check the path before you do.
 
 Errors come back as MCP tool errors. Rate-limited calls wait for Slack's `Retry-After`
 and retry within 30 seconds. A send that fails after the request left the machine is
@@ -108,6 +116,7 @@ account each token belongs to.
 | `SLACK_ENV_FILE` | read this env file instead of `.env` next to `server.py` |
 | `SLACK_STYLE_GATE` | `off` sends without the style gate (default on) |
 | `SLACK_READ_ONLY` | `1` hides every tool that changes Slack or local files |
+| `SLACK_FILE_ROOTS` | folders, separated by `:`, that upload reads from and download writes to; default home and temp |
 | `SLACK_WRITE_CHANNELS` | comma-separated ids (`C...`, `D...`, `U...`) writes may target; a DM by user id needs that `U...` listed; unset allows any |
 
 ## Registration
