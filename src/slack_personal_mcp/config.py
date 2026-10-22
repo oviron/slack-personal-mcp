@@ -6,8 +6,8 @@ TOKEN_PREFIX = "SLACK_USER_TOKEN_"
 
 
 def load_env(default_env_file: str | None = None) -> None:
-    """Load SLACK_ENV_FILE, else default_env_file; real environment variables win."""
-    path = os.environ.get("SLACK_ENV_FILE") or default_env_file
+    """Load SLACK_ENV_FILE (empty = none), else default_env_file; real environment variables win."""
+    path = os.environ.get("SLACK_ENV_FILE", default_env_file)
     if path:
         load_dotenv(path)
 
