@@ -1,3 +1,5 @@
+from typing import Any
+
 from mcp.server.fastmcp.exceptions import ToolError
 
 from .app import tool
@@ -18,13 +20,13 @@ def enforce_style(text: str, allow_promise: bool, what: str = "the text") -> Non
         raise ToolError(f"REFUSED - rewrite {what} before sending.\n" + format_violations(result, allow_promise))
 
 
-def with_warnings(out: dict, data: dict) -> dict:
+def with_warnings(out: dict, data: dict) -> dict[str, Any]:
     found = warnings(data)
     return out | {"warnings": found} if found else out
 
 
 @tool(write=False, local=True)
-def slack_lint(text: str) -> dict:
+def slack_lint(text: str) -> dict[str, Any]:
     """Dry-run the style gate on a draft without sending. clean=true means it would pass."""
     result = check(text)
     return {"clean": not result["errors"] and not result["warnings"], **result}
@@ -40,7 +42,7 @@ def slack_send_message(
     format: str = "markdown",
     unfurl_links: bool = False,
     allow_promise: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Post a Slack message AS THE USER (no app badge), via personal user token.
     Style gate (enforced before send unless SLACK_STYLE_GATE=off): no AI typography
     (em/en dash, ellipsis char, curly quotes, nbsp, bullet) - use plain ASCII; no AI-slop
@@ -74,7 +76,7 @@ def slack_send_message(
     return with_warnings(out, data)
 
 
-def _react(method: str, workspace: str, channel_id: str, ts: str, name: str) -> dict:
+def _react(method: str, workspace: str, channel_id: str, ts: str, name: str) -> dict[str, Any]:
     name = name.strip().strip(":")
     channel = write_target(workspace, channel_id)
     call(method, workspace=workspace, json_body={"channel": channel, "timestamp": ts, "name": name})
@@ -82,7 +84,7 @@ def _react(method: str, workspace: str, channel_id: str, ts: str, name: str) -> 
 
 
 @tool(write=True, idempotent=True)
-def slack_add_reaction(workspace: str, channel_id: str, ts: str, name: str) -> dict:
+def slack_add_reaction(workspace: str, channel_id: str, ts: str, name: str) -> dict[str, Any]:
     """Add an emoji reaction to a message AS THE USER (reactions.add, needs reactions:write).
     channel_id: as in slack_send_message. ts: the message timestamp. name: emoji name without colons, e.g. eyes.
     """
@@ -90,6 +92,6 @@ def slack_add_reaction(workspace: str, channel_id: str, ts: str, name: str) -> d
 
 
 @tool(write=True, idempotent=True, destructive=True)
-def slack_remove_reaction(workspace: str, channel_id: str, ts: str, name: str) -> dict:
+def slack_remove_reaction(workspace: str, channel_id: str, ts: str, name: str) -> dict[str, Any]:
     """Remove the user's emoji reaction from a message (reactions.remove, needs reactions:write)."""
     return _react("reactions.remove", workspace, channel_id, ts, name)

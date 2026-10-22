@@ -6,6 +6,9 @@ import pytest
 from conftest import body
 from mcp.server.fastmcp.exceptions import ToolError
 
+from slack_personal_mcp import tools_files
+from slack_personal_mcp.server import mcp
+
 pytestmark = pytest.mark.anyio
 
 UPLOAD_URL = "https://files.slack.com/upload/v1/x"
@@ -196,3 +199,47 @@ async def test_send_and_react_by_user_id_go_to_the_dm(slack, call_tool):
 async def test_lint_is_structured(call_tool):
     out = json.loads(await call_tool("slack_lint", text="hi"))
     assert out == {"clean": True, "errors": [], "warnings": []}
+
+
+async def test_upload_refuses_library_in_any_case(slack, call_tool, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "library").mkdir()
+    (tmp_path / "library" / "cookies").write_text("x")
+    with pytest.raises(ToolError, match="Library"):
+        await upload(call_tool, tmp_path / "library" / "cookies")
+
+
+async def test_upload_refuses_fifo_without_hanging(slack, call_tool, tmp_path):
+    os.mkfifo(tmp_path / "pipe")
+    with pytest.raises(ToolError, match="regular file"):
+        await upload(call_tool, tmp_path / "pipe")
+
+
+async def test_file_name_as_title_goes_through_style_gate(slack, call_tool, tmp_path):
+    (tmp_path / "a — b.txt").write_text("x")
+    with pytest.raises(ToolError, match="title"):
+        await upload(call_tool, tmp_path / "a — b.txt")
+
+
+def test_open_rechecks_where_the_file_landed(tmp_path, secret, monkeypatch):
+    """A path swapped for a symlink between the check and the open is caught on the open descriptor."""
+    real = tools_files.allowed_path
+    checks = iter([lambda p: str(secret), real])
+    monkeypatch.setattr(tools_files, "allowed_path", lambda p: next(checks)(p))
+    with pytest.raises(ToolError, match="hidden"):
+        tools_files.open_allowed(str(tmp_path / "innocent.txt"), os.O_RDONLY)
+
+
+async def test_download_into_symlinked_folder_lands_in_the_target(slack, call_tool, tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    file_info(slack, size=3)
+    slack.on(FILE_URL, lambda r: httpx.Response(200, content=b"abc"))
+    out = json.loads(await download(call_tool, tmp_path / "link"))
+    assert (tmp_path / "real" / "F1-a.txt").read_bytes() == b"abc"
+    assert out["path"] == os.path.join(os.path.realpath(tmp_path / "real"), "F1-a.txt")
+
+
+async def test_structured_content():
+    _, structured = await mcp.call_tool("slack_lint", {"text": "hi"})
+    assert structured == {"clean": True, "errors": [], "warnings": []}

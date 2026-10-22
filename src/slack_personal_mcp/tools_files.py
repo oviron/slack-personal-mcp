@@ -1,8 +1,10 @@
 import contextlib
+import fcntl
 import json
 import os
+import secrets
 import stat
-import tempfile
+from typing import Any
 
 import httpx
 from mcp.server.fastmcp.exceptions import ToolError
@@ -29,10 +31,38 @@ def allowed_path(path: str) -> str:
         parts = [] if real == root else os.path.relpath(real, root).split(os.sep)
         if any(p.startswith(".") for p in parts):
             raise ToolError(f"Refusing {path}: hidden files and folders are off limits")
-        if not explicit and root == os.path.realpath(os.path.expanduser("~")) and parts[:1] == ["Library"]:
+        home = os.path.realpath(os.path.expanduser("~"))
+        # casefold: macOS file systems usually ignore case, so ~/library is ~/Library
+        if not explicit and root == home and parts and parts[0].casefold() == "library":
             raise ToolError(f"Refusing {path}: ~/Library is off limits")
         return real
     raise ToolError(f"Refusing {path}: outside SLACK_FILE_ROOTS ({os.pathsep.join(roots)})")
+
+
+def fd_path(fd: int) -> str | None:
+    """Where an open file or folder really is, to recheck it after opening (closes symlink races)."""
+    if hasattr(fcntl, "F_GETPATH"):
+        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
+    with contextlib.suppress(OSError):
+        return os.readlink(f"/proc/self/fd/{fd}")
+    return None
+
+
+def open_allowed(path: str, flags: int) -> int:
+    """Open a path inside the roots without following a final symlink, then recheck where it landed."""
+    real = allowed_path(path)
+    try:
+        fd = os.open(real, flags | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        raise ToolError(f"Cannot open {path}: {exc.strerror}") from None
+    try:
+        landed = fd_path(fd)
+        if landed is not None:
+            allowed_path(landed)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def check_slack_url(url: str) -> None:
@@ -52,7 +82,7 @@ def slack_upload_file(
     title: str = "",
     thread_ts: str = "",
     allow_promise: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Upload a local file to a Slack channel/DM AS THE USER, with an optional comment.
     Same style gate as slack_send_message applies to initial_comment and title.
     channel_id: C.../G.../D..., or a user id U... to upload into the DM with that person
@@ -60,15 +90,12 @@ def slack_upload_file(
     file_path: absolute path inside SLACK_FILE_ROOTS (default: home and temp folders; hidden
     files and ~/Library refused). title: file title, defaults to the filename.
     """
-    for text, what in ((initial_comment, "the comment"), (title, "the title")):
+    name = os.path.basename(os.path.expanduser(file_path))
+    title = title or name
+    for text, what in ((initial_comment, "the comment"), (title, "the title (defaults to the file name)")):
         if text:
             enforce_style(text, allow_promise, what)
-    real = allowed_path(file_path)
-    name = os.path.basename(os.path.expanduser(file_path))
-    try:
-        fd = os.open(real, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError as exc:
-        raise ToolError(f"Cannot open {file_path}: {exc.strerror}") from None
+    fd = open_allowed(file_path, os.O_RDONLY)
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode):
         os.close(fd)
@@ -94,7 +121,7 @@ def slack_upload_file(
         if upload is None or upload.status_code != 200:
             raise SlackError(f"Upload of {name} failed while sending bytes ({failure}); nothing was shared. {file_id=}")
 
-    body: dict = {"files": json.dumps([{"id": file_id, "title": title or name}]), "channel_id": channel}
+    body: dict = {"files": json.dumps([{"id": file_id, "title": title}]), "channel_id": channel}
     if initial_comment:
         body["initial_comment"] = initial_comment
     if thread_ts:
@@ -125,7 +152,7 @@ def _shares(f: dict) -> list[dict]:
 
 
 @tool(write=False)
-def slack_file_info(workspace: str, file_id: str) -> dict:
+def slack_file_info(workspace: str, file_id: str) -> dict[str, Any]:
     """File metadata by id (files.info, needs files:read): name, type, size, owner, mode, and every
     message that shares it (channel, ts, thread_ts). External files carry external_url."""
     f = call("files.info", workspace=workspace, params={"file": file_id})["file"]
@@ -144,7 +171,7 @@ def slack_file_info(workspace: str, file_id: str) -> dict:
 @tool(write=False)
 def slack_list_files(
     workspace: str, channel_id: str = "", user_id: str = "", types: str = "", count: int = 20, page: int = 1
-) -> dict:
+) -> dict[str, Any]:
     """List files, newest first (files.list, needs files:read). Filter by channel_id and/or
     user_id (uploader). types: comma list of all, spaces, snippets, images, gdocs, zips, pdfs.
     page: 1-based; the reply says how many pages there are.
@@ -169,7 +196,7 @@ def slack_list_files(
 
 
 @tool(write=True, destructive=True)
-def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloads/slack") -> dict:
+def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloads/slack") -> dict[str, Any]:
     """Download a Slack file by id to a local folder (needs files:read). Returns the saved path.
     Saved as <file_id>-<name>, replacing an earlier copy only once the new one is complete.
     dest_dir: inside SLACK_FILE_ROOTS, like slack_upload_file. External files (Google Drive and
@@ -185,13 +212,16 @@ def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloa
     size = f.get("size")
     if size and size > MAX_FILE:
         raise ToolError(f"File {file_id} is {size} bytes; the limit is {MAX_FILE}")
-    dest = allowed_path(dest_dir)
-    os.makedirs(dest, exist_ok=True)
+    os.makedirs(allowed_path(dest_dir), exist_ok=True)
+    dir_fd = open_allowed(dest_dir, os.O_RDONLY | os.O_DIRECTORY)
+    dest = fd_path(dir_fd) or allowed_path(dest_dir)
     name = os.path.basename(f.get("name") or "file").lstrip(".") or "file"
-    path = os.path.join(dest, f"{file_id}-{name}")
+    final = f"{file_id}-{name}"
+    part = f".{file_id}-{secrets.token_hex(8)}.part"
     headers = {"Authorization": f"Bearer {token(workspace)}"}
 
-    fd, part = tempfile.mkstemp(dir=dest, prefix=f".{file_id}-", suffix=".part")
+    # Every file operation goes through dir_fd, so swapping the folder for a symlink changes nothing.
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
     try:
         with (
             os.fdopen(fd, "wb") as out,
@@ -209,10 +239,12 @@ def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloa
                 out.write(chunk)
         if size is not None and written != size:
             raise SlackError(f"Download of {file_id} is incomplete: got {written} of {size} bytes")
-        os.replace(part, path)
+        os.replace(part, final, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     except httpx.HTTPError as exc:
         raise SlackError(f"Slack download of {file_id} failed: {type(exc).__name__}") from None
     finally:
         with contextlib.suppress(FileNotFoundError):
-            os.unlink(part)
+            os.unlink(part, dir_fd=dir_fd)
+        os.close(dir_fd)
+    path = os.path.join(dest, final)
     return {"workspace": workspace_key(workspace), "file_id": file_id, "size": written, "path": path}
