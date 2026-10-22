@@ -25,6 +25,10 @@ and AI-slop before sending.
 
 Read and search results list message attachments under `files` (id, name, type, size).
 
+Errors come back as MCP tool errors. Rate-limited calls wait for Slack's `Retry-After`
+and retry within 30 seconds. A send that fails after the request left the machine is
+never retried: the error says the outcome is unknown, so check the channel first.
+
 ## Style gate
 
 `src/slack_personal_mcp/style.py` runs on every send:
@@ -99,6 +103,8 @@ account each token belongs to.
 | `SLACK_USER_TOKEN_<ALIAS>` | user token for one workspace |
 | `SLACK_ENV_FILE` | read this env file instead of `.env` next to `server.py` |
 | `SLACK_STYLE_GATE` | `off` sends without the style gate (default on) |
+| `SLACK_READ_ONLY` | `1` hides every tool that changes Slack or local files |
+| `SLACK_WRITE_CHANNELS` | comma-separated ids (`C...`, `D...`, `U...`) writes may target; a DM by user id needs that `U...` listed; unset allows any |
 
 ## Registration
 

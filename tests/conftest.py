@@ -61,8 +61,8 @@ def slack(monkeypatch) -> FakeSlack:
 
 @pytest.fixture
 def call_tool():
-    async def _call(name: str, **arguments):
-        result = await mcp.call_tool(name, arguments)
+    async def _call(tool_name: str, /, **arguments):
+        result = await mcp.call_tool(tool_name, arguments)
         content = result[0] if isinstance(result, tuple) else result
         return content[0].text
 

@@ -32,7 +32,9 @@ async def test_tools_are_registered():
 
 def test_workspace_aliases(monkeypatch):
     monkeypatch.setenv("SLACK_USER_TOKEN_SIDE_PROJECT", "xoxp-2")
-    assert set(workspace_tokens()) == {"acme", "side-project"}
+    monkeypatch.setenv("SLACK_USER_TOKEN_A__B", "xoxp-3")
+    monkeypatch.setenv("SLACK_USER_TOKEN_", "xoxp-4")
+    assert set(workspace_tokens()) == {"acme", "side-project", "a-b"}
 
 
 async def test_send_message_posts_as_user(slack, call_tool):
@@ -45,8 +47,8 @@ async def test_send_message_posts_as_user(slack, call_tool):
 
 
 async def test_style_gate_refuses_before_sending(slack, call_tool):
-    out = await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="Great question — sure")
-    assert out.startswith("REFUSED")
+    with pytest.raises(ToolError, match="REFUSED"):
+        await call_tool("slack_send_message", workspace="acme", channel_id="C1", text="Great question — sure")
     assert slack.requests == []
 
 

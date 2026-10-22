@@ -11,14 +11,21 @@ ROOT = Path(__file__).resolve().parent.parent
 pytestmark = pytest.mark.anyio
 
 
-@pytest.mark.parametrize("args", [[str(ROOT / "server.py")], ["-m", "slack_personal_mcp"]])
-async def test_stdio_launch(args):
-    env = {"PATH": os.environ["PATH"], "SLACK_ENV_FILE": os.devnull, "SLACK_USER_TOKEN_ACME": "xoxp-test"}
-    params = StdioServerParameters(command=sys.executable, args=args, env=env)
+@pytest.mark.parametrize(
+    ("args", "extra", "count"),
+    [
+        ([str(ROOT / "server.py")], {}, 14),
+        (["-m", "slack_personal_mcp"], {}, 14),
+        (["-m", "slack_personal_mcp"], {"SLACK_READ_ONLY": "1"}, 9),
+    ],
+)
+async def test_stdio_launch(args, extra, count, tmp_path):
+    env = {"PATH": os.environ["PATH"], "SLACK_ENV_FILE": os.devnull, "SLACK_USER_TOKEN_ACME": "xoxp-test", **extra}
+    params = StdioServerParameters(command=sys.executable, args=args, env=env, cwd=tmp_path)
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         tools = await session.list_tools()
-    assert len(tools.tools) == 14
+    assert len(tools.tools) == count
 
 
 @pytest.mark.parametrize(("env_file", "expected"), [(None, "cannot reach"), ("", "Unknown Slack workspace")])
