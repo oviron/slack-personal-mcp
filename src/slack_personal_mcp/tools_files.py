@@ -39,13 +39,14 @@ def allowed_path(path: str) -> str:
     raise ToolError(f"Refusing {path}: outside SLACK_FILE_ROOTS ({os.pathsep.join(roots)})")
 
 
-def fd_path(fd: int) -> str | None:
+def fd_path(fd: int) -> str:
     """Where an open file or folder really is, to recheck it after opening (closes symlink races)."""
-    if hasattr(fcntl, "F_GETPATH"):
-        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
-    with contextlib.suppress(OSError):
+    try:
+        if hasattr(fcntl, "F_GETPATH"):
+            return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
         return os.readlink(f"/proc/self/fd/{fd}")
-    return None
+    except OSError:
+        raise ToolError("Cannot tell where an opened file is on this system; refusing file access") from None
 
 
 def open_allowed(path: str, flags: int) -> int:
@@ -56,13 +57,31 @@ def open_allowed(path: str, flags: int) -> int:
     except OSError as exc:
         raise ToolError(f"Cannot open {path}: {exc.strerror}") from None
     try:
-        landed = fd_path(fd)
-        if landed is not None:
-            allowed_path(landed)
+        allowed_path(fd_path(fd))
     except BaseException:
         os.close(fd)
         raise
     return fd
+
+
+def make_allowed_dirs(path: str) -> None:
+    """mkdir -p, one level at a time through checked folder descriptors."""
+    real = allowed_path(path)
+    if os.path.isdir(real):
+        return
+    parent, name = os.path.split(real)
+    make_allowed_dirs(parent)
+    parent_fd = open_allowed(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(name, dir_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+def login_redirect(url: httpx.URL) -> bool:
+    """Without access Slack redirects file downloads to its sign-in page."""
+    return url.path in ("", "/") or "signin" in url.path or "redir" in url.params
 
 
 def check_slack_url(url: str) -> None:
@@ -212,24 +231,24 @@ def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloa
     size = f.get("size")
     if size and size > MAX_FILE:
         raise ToolError(f"File {file_id} is {size} bytes; the limit is {MAX_FILE}")
-    os.makedirs(allowed_path(dest_dir), exist_ok=True)
-    dir_fd = open_allowed(dest_dir, os.O_RDONLY | os.O_DIRECTORY)
-    dest = fd_path(dir_fd) or allowed_path(dest_dir)
     name = os.path.basename(f.get("name") or "file").lstrip(".") or "file"
     final = f"{file_id}-{name}"
     part = f".{file_id}-{secrets.token_hex(8)}.part"
     headers = {"Authorization": f"Bearer {token(workspace)}"}
+    make_allowed_dirs(dest_dir)
+    dir_fd = open_allowed(dest_dir, os.O_RDONLY | os.O_DIRECTORY)
 
     # Every file operation goes through dir_fd, so swapping the folder for a symlink changes nothing.
-    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
     try:
+        dest = fd_path(dir_fd)
+        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
         with (
             os.fdopen(fd, "wb") as out,
             client().stream("GET", url, headers=headers, follow_redirects=True, timeout=300) as resp,
         ):
             # Without files:read Slack answers with its HTML login page instead of the file.
             html = "text/html" in resp.headers.get("content-type", "") and f.get("filetype") != "html"
-            if resp.status_code != 200 or html:
+            if resp.status_code != 200 or html or login_redirect(resp.url):
                 raise SlackError(f"Slack download failed: HTTP {resp.status_code} {resp.headers.get('content-type')}")
             written = 0
             for chunk in resp.iter_bytes():

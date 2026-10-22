@@ -243,3 +243,37 @@ async def test_download_into_symlinked_folder_lands_in_the_target(slack, call_to
 async def test_structured_content():
     _, structured = await mcp.call_tool("slack_lint", {"text": "hi"})
     assert structured == {"clean": True, "errors": [], "warnings": []}
+
+
+async def test_download_folder_swapped_mid_transfer_keeps_the_opened_folder(slack, call_tool, tmp_path):
+    (tmp_path / "dest").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    file_info(slack, size=3)
+
+    def swap_then_reply(request):
+        (tmp_path / "dest").rename(tmp_path / "moved")
+        (tmp_path / "dest").symlink_to(tmp_path / ".hidden")
+        return httpx.Response(200, content=b"abc")
+
+    slack.on(FILE_URL, swap_then_reply)
+    await download(call_tool, tmp_path / "dest")
+    assert (tmp_path / "moved" / "F1-a.txt").read_bytes() == b"abc"
+    assert os.listdir(tmp_path / ".hidden") == []
+
+
+async def test_download_creates_missing_folders(slack, call_tool, tmp_path):
+    file_info(slack, size=3)
+    slack.on(FILE_URL, lambda r: httpx.Response(200, content=b"abc"))
+    await download(call_tool, tmp_path / "a" / "b")
+    assert (tmp_path / "a" / "b" / "F1-a.txt").read_bytes() == b"abc"
+
+
+async def test_download_refuses_sign_in_redirect(slack, call_tool, tmp_path):
+    file_info(slack, filetype="html")
+    slack.on(FILE_URL, lambda r: httpx.Response(302, headers={"location": "https://acme.slack.com/?redir=%2Ff"}))
+    slack.on(
+        "https://acme.slack.com/", lambda r: httpx.Response(200, text="<html>", headers={"content-type": "text/html"})
+    )
+    with pytest.raises(ToolError, match="download failed"):
+        await download(call_tool, tmp_path)
+    assert os.listdir(tmp_path) == []
