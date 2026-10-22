@@ -104,7 +104,7 @@ account each token belongs to.
 | `SLACK_ENV_FILE` | read this env file instead of `.env` next to `server.py` |
 | `SLACK_STYLE_GATE` | `off` sends without the style gate (default on) |
 | `SLACK_READ_ONLY` | `1` hides every tool that changes Slack or local files |
-| `SLACK_WRITE_CHANNELS` | comma-separated ids (`C...`, `D...`, `U...`) writes may target; unset allows any |
+| `SLACK_WRITE_CHANNELS` | comma-separated ids (`C...`, `D...`, `U...`) writes may target; a DM by user id needs that `U...` listed; unset allows any |
 
 ## Registration
 

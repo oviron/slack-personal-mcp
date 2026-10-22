@@ -34,9 +34,8 @@ def slack_upload_file(
     if size == 0:
         raise RuntimeError(f"Refusing to upload an empty file: {path}")
     name = os.path.basename(path)
-    target = resolve_channel(workspace, channel_id)
-    check_write_target(target, channel_id)
-    channel_id = target
+    check_write_target(channel_id)
+    channel_id = resolve_channel(workspace, channel_id)
 
     ticket = call(
         "files.getUploadURLExternal",

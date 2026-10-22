@@ -124,10 +124,15 @@ async def test_write_channels_allowlist(slack, call_tool, monkeypatch, tmp_path)
 
     path = tmp_path / "a.txt"
     path.write_text("x")
-    slack.on("conversations.open", lambda r: httpx.Response(200, json={"ok": True, "channel": {"id": "D8"}}))
     with pytest.raises(ToolError, match="not allowed"):
         await call_tool("slack_upload_file", workspace="acme", channel_id="U1", file_path=str(path))
-    assert slack.calls("files.getUploadURLExternal") == []
+    assert slack.requests[1:] == []  # no DM opened, nothing uploaded
+
+
+async def test_unreadable_reply_to_a_write_is_unknown(slack):
+    slack.on("chat.postMessage", lambda r: httpx.Response(200, text="<html>"))
+    with pytest.raises(slack_api.OutcomeUnknown, match="may have been applied"):
+        slack_api.call("chat.postMessage", workspace="acme", json_body={})
 
 
 async def test_annotations():

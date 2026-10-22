@@ -139,6 +139,11 @@ def call(
         except ValueError:
             data = None
         if not isinstance(data, dict):
+            if write and resp.status_code < 300:
+                raise OutcomeUnknown(
+                    f"Slack {method}: HTTP {resp.status_code} with an unreadable body; it may have been applied. "
+                    "Check Slack before retrying."
+                )
             raise SlackError(
                 f"Slack {method}: HTTP {resp.status_code}, not a JSON response "
                 f"({resp.headers.get('content-type', 'no content-type')})"
@@ -167,11 +172,11 @@ def resolve_channel(workspace: str, channel_id: str) -> str:
     return channel_id
 
 
-def check_write_target(*ids: str) -> None:
-    """Refuse a write outside SLACK_WRITE_CHANNELS when it is set. Pass every id naming the target."""
+def check_write_target(channel_id: str) -> None:
+    """Refuse a write outside SLACK_WRITE_CHANNELS when it is set. A DM by user id needs that U... listed."""
     allowed = write_channels()
-    if allowed is not None and not allowed.intersection(i for i in ids if i):
-        raise SlackError(f"Writing to {ids[0]} is not allowed: it is not listed in SLACK_WRITE_CHANNELS")
+    if allowed is not None and channel_id not in allowed:
+        raise SlackError(f"Writing to {channel_id} is not allowed: it is not listed in SLACK_WRITE_CHANNELS")
 
 
 def file_summary(f: dict) -> dict:
