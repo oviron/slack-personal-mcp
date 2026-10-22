@@ -20,6 +20,19 @@ def enforce_style(text: str, allow_promise: bool, what: str = "the text") -> Non
         raise ToolError(f"REFUSED - rewrite {what} before sending.\n" + format_violations(result, allow_promise))
 
 
+def message_text(text: str, format: str, allow_promise: bool) -> dict[str, str]:
+    """Check format, length and style; return the text under the field Slack expects for that format."""
+    if format not in ("markdown", "mrkdwn"):
+        raise ToolError(f"format must be markdown or mrkdwn, not {format!r}")
+    limit = MAX_MARKDOWN if format == "markdown" else MAX_TEXT
+    if len(text) > limit:
+        raise ToolError(
+            f"Text is {len(text)} characters; Slack takes up to {limit} as {format}. Split it or upload a file."
+        )
+    enforce_style(text, allow_promise)
+    return {"markdown_text" if format == "markdown" else "text": text}
+
+
 def with_warnings(out: dict, data: dict) -> dict[str, Any]:
     found = warnings(data)
     return out | {"warnings": found} if found else out
@@ -54,19 +67,11 @@ def slack_send_message(
     format: markdown (default; standard Markdown, up to 12,000 chars) or mrkdwn (Slack's own:
     *bold*, <url|label>). unfurl_links: show link previews (off by default).
     """
-    if format not in ("markdown", "mrkdwn"):
-        raise ToolError(f"format must be markdown or mrkdwn, not {format!r}")
-    limit = MAX_MARKDOWN if format == "markdown" else MAX_TEXT
-    if len(text) > limit:
-        raise ToolError(
-            f"Text is {len(text)} characters; Slack takes up to {limit} as {format}. Split it or upload a file."
-        )
     if reply_broadcast and not thread_ts:
         raise ToolError("reply_broadcast needs thread_ts")
-    enforce_style(text, allow_promise)
+    content = message_text(text, format, allow_promise)
     channel = write_target(workspace, channel_id)
-    body: dict = {"channel": channel, "unfurl_links": unfurl_links}
-    body["markdown_text" if format == "markdown" else "text"] = text
+    body: dict = {"channel": channel, "unfurl_links": unfurl_links} | content
     if thread_ts:
         body["thread_ts"] = thread_ts
         if reply_broadcast:

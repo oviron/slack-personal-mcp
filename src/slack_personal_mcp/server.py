@@ -1,4 +1,4 @@
-from . import tools_files, tools_read, tools_write  # noqa: F401  (register tools)
+from . import tools_files, tools_messages, tools_read, tools_write  # noqa: F401  (register tools)
 from .app import drop_write_tools, mcp
 from .config import load_env, read_only
 
