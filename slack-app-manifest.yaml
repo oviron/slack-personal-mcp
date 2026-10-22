@@ -1,0 +1,50 @@
+# Slack app for slack-personal-mcp: user token only, no bot user.
+# https://api.slack.com/apps > Create New App > From an app manifest.
+# Remove scopes you don't need; the tools that use them then fail with missing_scope.
+display_information:
+  name: slack-personal-mcp
+  description: Personal MCP server that acts in Slack with your own user token
+oauth_config:
+  scopes:
+    user:
+      # Send, edit, delete and schedule messages; react; set status
+      - chat:write
+      - reactions:write
+      - reactions:read
+      - users.profile:write
+      # Read history and threads
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      # Conversation and people directories
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      - users:read
+      - users:read.email
+      - usergroups:read
+      - emoji:read
+      # Open DMs by user id; mark DMs read
+      - im:write
+      # Mark channels and group DMs read (channels:write and groups:write also allow managing channels)
+      - channels:write
+      - groups:write
+      - mpim:write
+      # Files and canvases
+      - files:read
+      - files:write
+      - canvases:read
+      # Search: classic and Real-time Search
+      - search:read
+      - search:read.public
+      - search:read.private
+      - search:read.im
+      - search:read.mpim
+      - search:read.files
+      - search:read.users
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

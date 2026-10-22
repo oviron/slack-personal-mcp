@@ -28,7 +28,9 @@ def call(method: str, *, workspace: str, params: dict | None = None, json_body: 
     except SlackError as exc:
         if exc.error != "missing_scope":
             raise
-        if method in METHOD_SCOPES:
+        if exc.needed:
+            scopes = exc.needed
+        elif method in METHOD_SCOPES:
             scopes = METHOD_SCOPES[method]
         elif method.startswith("users."):
             scopes = "users:read"
