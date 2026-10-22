@@ -226,7 +226,7 @@ Without a clone, uv runs a tagged release straight from GitHub. There is no `ser
 next to it, so name the env file:
 
 ```bash
-SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.com/oviron/slack-personal-mcp@v0.2.2 slack-personal-mcp
+SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.com/oviron/slack-personal-mcp@v0.2.3 slack-personal-mcp
 ```
 
 ## Troubleshooting

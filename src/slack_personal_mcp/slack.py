@@ -112,7 +112,9 @@ def call(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             if json_body is not None:
-                resp = client().post(url, headers=headers, json=json_body, timeout=timeout)
+                # Without the charset Slack accepts the body but adds a missing_charset warning to every reply.
+                json_headers = {**headers, "Content-Type": "application/json; charset=utf-8"}
+                resp = client().post(url, headers=json_headers, json=json_body, timeout=timeout)
             elif form is not None:
                 resp = client().post(url, headers=headers, data=form, timeout=timeout)
             else:

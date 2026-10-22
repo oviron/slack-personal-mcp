@@ -1,6 +1,6 @@
 [project]
 name = "slack-personal-mcp"
-version = "0.2.2"
+version = "0.2.3"
 description = "MCP server for Slack on personal user tokens: posts as you, with file tools and an optional anti-AI-slop style gate"
 readme = "README.md"
 license = "MIT"

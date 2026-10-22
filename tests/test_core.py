@@ -162,8 +162,9 @@ async def test_search_query_stays_out_of_logs(slack, call_tool, caplog):
 
 def test_post_body_is_json(slack):
     slack.on("chat.postMessage", {"ok": True})
-    slack_api.call("chat.postMessage", workspace="acme", json_body={"text": "hi"})
-    assert body(slack.requests[0]) == {"text": "hi"}
+    slack_api.call("chat.postMessage", workspace="acme", json_body={"text": "привет"})
+    assert body(slack.requests[0]) == {"text": "привет"}
+    assert slack.requests[0].headers["content-type"] == "application/json; charset=utf-8"
 
 
 @pytest.mark.parametrize(
