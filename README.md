@@ -17,13 +17,76 @@ and AI-slop before sending.
 - `slack_add_reaction(workspace, channel_id, ts, name)` - react to a message as the user (`name` without colons, e.g. `eyes`)
 - `slack_remove_reaction(workspace, channel_id, ts, name)` - remove that reaction
 - `slack_lint(text)` - dry-run the style gate on a draft
-- `slack_search_messages(workspace, query, count?)`
-- `slack_read_channel(workspace, channel_id, limit?)`
-- `slack_read_thread(workspace, channel_id, thread_ts, limit?)`
-- `slack_find_user(workspace, query, limit?)`
-- `slack_find_channel(workspace, query, limit?)`
+- `slack_search_messages(workspace, query, count?, page?, sort?, sort_dir?, in_channel?, from_user?, before?, after?, has?)`
+- `slack_read_channel(workspace, channel_id, limit?, cursor?, oldest?, latest?, inclusive?)`
+- `slack_read_thread(workspace, channel_id, thread_ts, limit?, cursor?, oldest?, latest?, inclusive?, all_pages?, max_pages?)`
+- `slack_find_user(workspace, query, limit?, refresh?)`
+- `slack_find_channel(workspace, query, limit?, refresh?, types?)`
+- `slack_user_info(workspace, user_id)`
+- `slack_channel_info(workspace, channel_id)`
 
-Read and search results list message attachments under `files` (id, name, type, size).
+## Чтение и поиск
+
+Инструменты из `tools_read.py` возвращают объекты в MCP `structuredContent` с
+`outputSchema`. Списки обёрнуты в `workspaces`, `users`, `channels` или `messages`;
+инструменты информации возвращают `user` или `channel`.
+
+`slack_read_channel` читает одну страницу и возвращает
+`{messages, next_cursor, has_more}`. Для продолжения передайте `next_cursor` как
+`cursor`, сохранив остальные параметры. `oldest` и `latest` принимают Slack timestamps,
+например `1729612345.123456`; `inclusive=true` включает сообщения на границах диапазона.
+`limit` задаёт размер страницы: по умолчанию 20 для канала и 50 для треда, от 1 до 1000.
+Slack может вернуть меньше сообщений, поэтому проверяйте курсор и `has_more`.
+
+`slack_read_thread` принимает `thread_ts` корневого сообщения и возвращает те же поля
+плюс `complete`. По умолчанию читает одну страницу; `all_pages=true` обходит страницы
+до исчерпания курсора или бюджета `max_pages` (по умолчанию 10, от 1 до 100).
+При оставшихся сообщениях `complete=false`. Обход также останавливается, если Slack
+не дал новый курсор. Полнота относится к переданному диапазону и начальному курсору.
+
+Сообщения сохраняют исходные `ts` и `text`; рядом с `ts` есть время `time` в ISO 8601
+с UTC `+00:00`. Автор представлен раздельными `user_id` и `user_name`, в том числе в
+поиске. Также возвращаются `thread_ts`, `reply_count`, `subtype`, `bot_id`, `bot_name`,
+`edited`, реакции с `name` и `count`, файлы в `files`. Текст вложений вынесен в
+`attachments_text` (pretext, title, text, fields), текст блоков в `blocks_text`
+(section, rich_text, context). Пустые поля пропускаются.
+
+`slack_search_messages` сохраняет сырой `query` и добавляет фильтры `in_channel`,
+`from_user`, `before`, `after`, `has` как операторы `in:`, `from:`, `before:`, `after:`,
+`has:`. Пример: `query="release", in_channel="C123", from_user="U123", has="file"`.
+`count` от 1 до 100 (по умолчанию 15), `page` от 1 до 100, `sort=score|timestamp`,
+`sort_dir=asc|desc` (по умолчанию `score`, `desc`). Ответ: `{messages, total, page, pages}`.
+
+Поиск по имени использует полные каталоги `users.list` и `conversations.list`.
+Кеш живёт в памяти процесса один час, изолирован по workspace и `team_id`, защищён
+от одновременной загрузки из потоков и сбрасывается при смене токена.
+`refresh=true` обновляет каталог соответствующего поиска; для DM обновляет и имена.
+Запуск сервера не загружает каталоги. При первом обращении к каталогу вызывается
+`auth.test` для определения `team_id`; первое чтение сообщений с авторами загружает
+каталог пользователей. Имена берутся из этого же кеша.
+
+Точный email в `slack_find_user` идёт через `users.lookupByEmail`, `U...`/`W...` через
+`users.info`, без сканирования каталога. `slack_user_info` и `slack_channel_info`
+возвращают данные `users.info` и `conversations.info` без кеша.
+
+`slack_find_channel` по умолчанию ищет неархивные публичные и приватные каналы
+(`types="public_channel,private_channel"`). Для личных и групповых переписок передайте
+`types="im,mpim"`; пустой `query` выводит первые `limit` результатов. У DM поле `name`
+содержит имя собеседника из кеша, а `user_id` его идентификатор. Каталоги разных наборов
+`types` кешируются отдельно. Типы соответствуют [conversations.list](https://docs.slack.dev/reference/methods/conversations.list/).
+
+| Чтение | User token scopes |
+|---|---|
+| История и треды | `channels:history`, `groups:history`, `im:history`, `mpim:history` по типу переписки |
+| Поиск сообщений | `search:read` |
+| Каталог, профиль и имена авторов/собеседников | `users:read` |
+| Точный email | `users:read.email` ([users.lookupByEmail](https://docs.slack.dev/reference/methods/users.lookupByEmail/)) |
+| Каталог и информация о каналах | `channels:read`, `groups:read` по типу канала |
+| Каталог и информация о DM/MPIM | `im:read`, `mpim:read` по типу переписки |
+
+Для email и DM/MPIM добавьте соответствующие scopes в **User Token Scopes** приложения:
+их нет в базовом манифесте ниже. При `missing_scope` ошибка называет нужные scopes.
+После изменения scopes переустановите приложение и замените токен.
 
 In every writing tool `channel_id` may be a user id `U...`: the message, file or reaction
 goes to the DM with that person (needs `im:write`).
