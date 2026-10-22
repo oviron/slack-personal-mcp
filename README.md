@@ -1,5 +1,7 @@
 # slack-personal-mcp
 
+<!-- mcp-name: io.github.oviron/slack-personal-mcp -->
+
 An MCP server that works in Slack with your own user token (`xoxp-`). Messages, files,
 reactions and status changes come from you, without the "via app" badge a bot token adds.
 
@@ -243,6 +245,20 @@ SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.c
 | `feature_not_enabled` from `slack_search` | Real-time Search is not available in this workspace; use `slack_search_messages` |
 
 Changes to the code or `.env` take effect when the client restarts the server.
+
+## Releasing
+
+1. Bump the version in `pyproject.toml`, `src/slack_personal_mcp/__init__.py` and both
+   `version` fields of `server.json`, then merge.
+2. Tag `vX.Y.Z` on `main` and create a GitHub release.
+3. Run the **Publish** workflow on that tag. It builds the package, uploads it to PyPI
+   and then publishes `server.json` to the
+   [MCP Registry](https://registry.modelcontextprotocol.io/).
+
+Before the first run, the PyPI account owner adds a trusted publisher for project
+`slack-personal-mcp`: repository `oviron/slack-personal-mcp`, workflow `publish.yml`,
+environment `pypi`. The Registry needs no setup: it signs in with the repository's GitHub
+OIDC token and checks the `mcp-name` line at the top of this README.
 
 ## License
 

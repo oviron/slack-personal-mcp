@@ -1,0 +1,57 @@
+name: Publish
+
+# Run by hand on a release tag: Actions > Publish > Run workflow > Use workflow from: tag vX.Y.Z.
+# PyPI needs a trusted publisher for this repo and workflow (environment "pypi");
+# the MCP Registry signs in with this repo's GitHub OIDC token and needs no secret.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
+      - name: Check the tag matches every version
+        run: |
+          test "$GITHUB_REF_TYPE" = tag || { echo "run this on a release tag"; exit 1; }
+          tag="${GITHUB_REF_NAME#v}"
+          test "$(uv version --short)" = "$tag"
+          test "$(jq -r .version server.json)" = "$tag"
+          test "$(jq -r '.packages[0].version' server.json)" = "$tag"
+      - run: uv build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+
+  registry:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish

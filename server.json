@@ -1,0 +1,59 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.oviron/slack-personal-mcp",
+  "title": "Slack (personal user token)",
+  "description": "Slack as you: read, search, send, files and reactions with your user token, plus a style gate",
+  "repository": {
+    "url": "https://github.com/oviron/slack-personal-mcp",
+    "source": "github"
+  },
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "slack-personal-mcp",
+      "version": "0.2.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SLACK_ENV_FILE",
+          "description": "Path to a file with one SLACK_USER_TOKEN_<ALIAS>=xoxp-... line per workspace",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "filepath"
+        },
+        {
+          "name": "SLACK_READ_ONLY",
+          "description": "true hides every tool that changes Slack or local files",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "boolean"
+        },
+        {
+          "name": "SLACK_WRITE_CHANNELS",
+          "description": "Comma-separated conversation ids (C..., D..., U...) that writes may target; unset allows any",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "SLACK_FILE_ROOTS",
+          "description": "Folders, separated by ':', that uploads read from and downloads write to; default home and temp",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "SLACK_STYLE_GATE",
+          "description": "off sends without the style gate",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
