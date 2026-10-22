@@ -164,3 +164,26 @@ def test_post_body_is_json(slack):
     slack.on("chat.postMessage", {"ok": True})
     slack_api.call("chat.postMessage", workspace="acme", json_body={"text": "hi"})
     assert body(slack.requests[0]) == {"text": "hi"}
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ({"error": "missing_scope", "needed": "reactions:write"}, "add user token scope reactions:write, reinstall"),
+        ({"error": "not_in_channel"}, "not_in_channel; join the conversation"),
+        ({"error": "token_revoked"}, "revoked: create a new user token"),
+        ({"error": "token_expired"}, "token rotation is on"),
+        ({"error": "something_new"}, r"something_new$"),
+    ],
+)
+def test_errors_say_what_to_do(slack, reply, expected):
+    slack.on("reactions.add", {"ok": False} | reply)
+    with pytest.raises(slack_api.SlackError, match=expected) as exc:
+        slack_api.call("reactions.add", workspace="acme", json_body={})
+    assert exc.value.needed == reply.get("needed", "")
+
+
+async def test_read_tools_prefer_the_scope_slack_names(slack, call_tool):
+    slack.on("conversations.info", {"ok": False, "error": "missing_scope", "needed": "mpim:read"})
+    with pytest.raises(ToolError, match="scope.*: mpim:read; reinstall"):
+        await call_tool("slack_channel_info", workspace="acme", channel_id="G1")

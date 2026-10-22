@@ -30,6 +30,18 @@ WRITE_METHODS = {
     "users.profile.set",
 }
 
+_NEW_TOKEN = "create a new user token and replace it in .env"
+# What to do about common Slack errors; missing_scope is handled with the scope Slack names.
+ERROR_HINTS = {
+    "not_in_channel": "join the conversation in Slack first",
+    "channel_not_found": "check the id; private conversations and DMs need you to be a member",
+    "invalid_auth": f"the token is not valid: {_NEW_TOKEN}",
+    "token_revoked": f"the token was revoked: {_NEW_TOKEN}",
+    "account_inactive": f"the account or app was deactivated: {_NEW_TOKEN}",
+    "token_expired": f"token rotation is on: turn it off in the app settings, reinstall, {_NEW_TOKEN}",
+    "not_allowed_token_type": "use a user token (xoxp-), not a bot token",
+}
+
 MAX_ATTEMPTS = 3
 RETRY_BUDGET = 30.0  # seconds a single call may spend waiting for rate limits
 
@@ -38,10 +50,11 @@ _client_lock = threading.Lock()
 
 
 class SlackError(RuntimeError):
-    def __init__(self, message: str, *, error: str | None = None, retry_after: float | None = None):
+    def __init__(self, message: str, *, error: str | None = None, retry_after: float | None = None, needed: str = ""):
         super().__init__(message)
         self.error = error
         self.retry_after = retry_after
+        self.needed = needed  # scopes Slack names in a missing_scope answer
 
 
 class OutcomeUnknown(SlackError):
@@ -152,7 +165,14 @@ def call(
             )
         if not data.get("ok"):
             error = data.get("error") or f"HTTP {resp.status_code}"
-            raise SlackError(f"Slack {method} error: {error}", error=error)
+            needed = str(data.get("needed") or "") if error == "missing_scope" else ""
+            if needed:
+                hint = f"add user token scope {needed}, reinstall the app and replace the token"
+            else:
+                hint = ERROR_HINTS.get(error, "")
+            raise SlackError(
+                f"Slack {method} error: {error}" + (f"; {hint}" if hint else ""), error=error, needed=needed
+            )
         if resp.status_code != 200:
             raise SlackError(f"Slack {method}: unexpected HTTP {resp.status_code}")
         return data

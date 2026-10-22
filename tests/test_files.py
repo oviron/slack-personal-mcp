@@ -87,7 +87,9 @@ async def test_upload_share_failures(upload_routes, call_tool, tmp_path):
     with pytest.raises(ToolError, match="may have been applied.*file_id='F1'"):
         await upload(call_tool, tmp_path / "a.txt")
     upload_routes.on("files.completeUploadExternal", {"ok": False, "error": "not_in_channel"})
-    with pytest.raises(ToolError, match="not_in_channel; the file was uploaded but not shared"):
+    with pytest.raises(
+        ToolError, match="not_in_channel; join the conversation in Slack first; the file was uploaded but not shared"
+    ):
         await upload(call_tool, tmp_path / "a.txt")
 
 
