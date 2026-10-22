@@ -15,6 +15,7 @@ _SEARCH_FIELDS = {
         "channel_id",
         "channel_name",
         "message_ts",
+        "thread_ts",
         "content",
         "is_author_bot",
         "permalink",
