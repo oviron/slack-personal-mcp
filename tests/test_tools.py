@@ -25,6 +25,8 @@ TOOLS = {
     "slack_read_thread",
     "slack_find_user",
     "slack_find_channel",
+    "slack_user_info",
+    "slack_channel_info",
 }
 
 
@@ -73,6 +75,8 @@ async def test_slack_error_is_raised(slack, call_tool):
 
 
 async def test_read_channel(slack, call_tool):
+    slack.on("auth.test", {"ok": True, "team_id": "T1"})
+    slack.on("users.list", {"ok": True, "members": []})
     slack.on(
         "conversations.history",
         {

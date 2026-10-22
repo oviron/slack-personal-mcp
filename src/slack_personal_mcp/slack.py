@@ -2,10 +2,12 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 
 import httpx
 
 from .config import alias, workspace_tokens, write_channels
+from .message_text import attachments_text, blocks_text
 
 SLACK = "https://slack.com/api"
 
@@ -196,8 +198,31 @@ def file_summary(f: dict) -> dict:
     }
 
 
-def message(m: dict) -> dict:
-    out = {"ts": m.get("ts"), "user": m.get("user") or m.get("username"), "text": m.get("text")}
+def message(m: dict, user_names: dict[str, str] | None = None) -> dict:
+    out = {key: m.get(key) for key in ("ts", "text", "thread_ts", "reply_count", "subtype", "bot_id")}
+    if m.get("ts"):
+        seconds, _, fraction = m["ts"].partition(".")
+        out["time"] = (
+            datetime.fromtimestamp(int(seconds), timezone.utc)
+            .replace(microsecond=int(fraction[:6].ljust(6, "0")))
+            .isoformat()
+        )
+    out["user_id"] = m.get("user")
+    out["user_name"] = (user_names or {}).get(m.get("user")) or m.get("username")
+    out["bot_name"] = m.get("bot_name") or (m.get("bot_profile") or {}).get("name")
+    if m.get("bot_id") and not out["bot_name"]:
+        out["bot_name"] = m.get("username")
+    if m.get("edited"):
+        out["edited"] = {key: value for key, value in m["edited"].items() if value not in (None, "")}
+    if m.get("reactions"):
+        out["reactions"] = [
+            {key: reaction[key] for key in ("name", "count") if reaction.get(key) not in (None, "")}
+            for reaction in m["reactions"]
+        ]
+    out["attachments_text"] = attachments_text(m.get("attachments") or [])
+    out["blocks_text"] = blocks_text(m.get("blocks") or [], m.get("text") or "")
     if m.get("files"):
-        out["files"] = [file_summary(f) for f in m["files"]]
-    return out
+        out["files"] = [
+            {key: value for key, value in file_summary(f).items() if value not in (None, "")} for f in m["files"]
+        ]
+    return {key: value for key, value in out.items() if value not in (None, "", [], {})}

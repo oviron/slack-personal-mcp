@@ -4,6 +4,7 @@ from collections.abc import Callable
 import httpx
 import pytest
 
+from slack_personal_mcp import cache
 from slack_personal_mcp.server import mcp
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -24,6 +25,7 @@ def env(monkeypatch):
             monkeypatch.delenv(name)
     monkeypatch.setenv("SLACK_ENV_FILE", os.devnull)
     monkeypatch.setenv("SLACK_USER_TOKEN_ACME", "xoxp-test")
+    monkeypatch.setattr(cache, "directory", cache.DirectoryCache())
 
 
 class FakeSlack:
