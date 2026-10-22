@@ -1,4 +1,3 @@
-import json
 import re
 from pathlib import Path
 
@@ -33,10 +32,7 @@ def test_manifest_has_every_scope_the_readme_names():
     assert re.search(r"^  token_rotation_enabled: false$", (ROOT / "slack-app-manifest.yaml").read_text(), re.M)
 
 
-def test_registry_metadata_matches_the_package():
-    server = json.loads((ROOT / "server.json").read_text())
+def test_version_matches_the_package():
     pyproject = re.search(r'^version = "(.+)"$', (ROOT / "pyproject.toml").read_text(), re.M).group(1)
-    assert server["version"] == server["packages"][0]["version"] == pyproject == __version__
-    assert server["packages"][0]["identifier"] == "slack-personal-mcp"
-    assert README.startswith(f"# slack-personal-mcp\n\n<!-- mcp-name: {server['name']} -->\n")
-    assert len(server["description"]) <= 100
+    assert pyproject == __version__
+    assert f"@v{__version__} slack-personal-mcp" in README

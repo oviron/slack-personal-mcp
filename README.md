@@ -1,7 +1,5 @@
 # slack-personal-mcp
 
-<!-- mcp-name: io.github.oviron/slack-personal-mcp -->
-
 An MCP server that works in Slack with your own user token (`xoxp-`). Messages, files,
 reactions and status changes come from you, without the "via app" badge a bot token adds.
 
@@ -224,15 +222,11 @@ Claude Desktop (`claude_desktop_config.json`) and Cursor (`.cursor/mcp.json`):
 }
 ```
 
-Without a clone, uv runs a release from PyPI once it is published there, or from a git
-tag. There is no `server.py` next to it, so name the env file:
+Without a clone, uv runs a tagged release straight from GitHub. There is no `server.py`
+next to it, so name the env file:
 
 ```bash
-SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx slack-personal-mcp@0.2.1
-```
-
-```bash
-SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.com/oviron/slack-personal-mcp@v0.2.1 slack-personal-mcp
+SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.com/oviron/slack-personal-mcp@v0.2.2 slack-personal-mcp
 ```
 
 ## Troubleshooting
@@ -252,17 +246,11 @@ Changes to the code or `.env` take effect when the client restarts the server.
 
 ## Releasing
 
-1. Bump the version in `pyproject.toml`, `src/slack_personal_mcp/__init__.py` and both
-   `version` fields of `server.json`, run `uv lock`, then merge.
-2. Tag `vX.Y.Z` on `main` and create a GitHub release.
-3. Run the **Publish** workflow on that tag. It builds the package, uploads it to PyPI
-   and then publishes `server.json` to the
-   [MCP Registry](https://registry.modelcontextprotocol.io/).
+The package is not published to PyPI or the MCP Registry; releases are git tags.
 
-Before the first run, the PyPI account owner adds a trusted publisher for project
-`slack-personal-mcp`: repository `oviron/slack-personal-mcp`, workflow `publish.yml`,
-environment `pypi`. The Registry needs no setup: it signs in with the repository's GitHub
-OIDC token and checks the `mcp-name` line at the top of this README.
+1. Bump the version in `pyproject.toml` and `src/slack_personal_mcp/__init__.py`, run
+   `uv lock`, then merge.
+2. Tag `vX.Y.Z` on `main` and create a GitHub release.
 
 ## License
 
