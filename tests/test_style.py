@@ -250,3 +250,104 @@ def test_russian_promises(text):
 @pytest.mark.parametrize("text", ["До завтра!", "Встреча в пятницу", "Вчера сделал", "Не обещаю, что завтра"])
 def test_russian_non_promises(text):
     assert not check(text)["warnings"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Я в отпуске до конца недели.",
+        "Вчера закончили к вечеру.",
+        "I am on vacation by the end of the day.",
+        "We finished by Friday.",
+        "The meeting is by tomorrow evening.",
+    ],
+)
+def test_deadlines_require_a_promise_context(text):
+    assert not check(text)["warnings"]
+
+
+@pytest.mark.parametrize("text", ["By tomorrow.", "By Sunday.", "К пятнице.", "До конца недели."])
+def test_standalone_by_deadlines_are_elliptical_promises(text):
+    assert check(text)["warnings"]
+
+
+@pytest.mark.parametrize(
+    "verb",
+    (
+        "сделаю сделаем пришлю пришлём пришлем отправлю отправим закончу закончим доделаю доделаем "
+        "починю починим выложу выложим скину подготовлю подготовим напишу напишем посмотрю посмотрим "
+        "проверю проверим вернусь отвечу"
+    ).split(),
+)
+@pytest.mark.parametrize("deadline", ["завтра", "через 2 часа", "к пятнице"])
+def test_negated_russian_promise_verbs(verb, deadline):
+    assert check(f"{verb.capitalize()} {deadline}.")["warnings"]
+    assert not check(f"Не {verb} {deadline}.")["warnings"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Не обещаю, что сделаю завтра.",
+        "Не гарантирую, что сделаем через 2 часа.",
+        "Не обещаю, что будет готово к пятнице.",
+        "Не гарантирую что пришлю до конца недели.",
+        "Не обещаю, что сделаю завтра и пришлю к пятнице.",
+        "I can't promise, that I will send it tomorrow.",
+        "I can't promise that it will be ready by tomorrow.",
+        "I do not guarantee, that we will reply in 2 hours.",
+        "I can't promise that I will send it tomorrow and it will be ready by Friday.",
+    ],
+)
+def test_negated_main_promise_covers_its_complement(text):
+    assert not check(text)["warnings"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I do not know and I will send it tomorrow.",
+        "I don't know and we will reply in 2 hours.",
+        "I can't check it and it will be ready by tomorrow.",
+        "I won't promise and I will upload it tomorrow.",
+        "Не посмотрю сегодня и сделаю завтра.",
+        "Не обещаю, что сделаю завтра, но пришлю к пятнице.",
+        "I can't promise that it will be ready, but I will send it tomorrow.",
+    ],
+)
+def test_negation_does_not_cover_an_independent_promise(text):
+    assert check(text)["warnings"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Не будет готово завтра.",
+        "Не будет готово до конца недели.",
+        "К пятнице не будет готово.",
+        "We will not reply by Friday.",
+        "By Friday we will not reply.",
+        "We won't reply by Friday.",
+        "By Friday we won't reply.",
+    ],
+)
+def test_deadlines_of_negated_actions(text):
+    assert not check(text)["warnings"]
+
+
+@pytest.mark.parametrize(
+    ("text", "fragment"),
+    [
+        ("Я пришлю к пятнице.", "к пятнице"),
+        ("Будет готово до конца недели.", "до конца недели"),
+        ("We will reply by Friday.", "by Friday"),
+        ("By Friday we will reply.", "By Friday"),
+        ("К пятнице будет готово.", "К пятнице"),
+    ],
+)
+def test_deadlines_keep_their_own_diagnostic(text, fragment):
+    start = text.index(fragment)
+    assert any(
+        f"at [{start}:{start + len(fragment)}]" in warning and repr(fragment) in warning
+        for warning in check(text)["warnings"]
+    )

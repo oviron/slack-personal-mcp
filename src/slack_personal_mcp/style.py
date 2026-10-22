@@ -61,10 +61,14 @@ DEADLINE = (
 )
 INTERVAL = r"\bin \d+ (?:minute|hour|day|week)s?\b"
 PROMISE_CONTEXT = r"\b(?:will|(?:i|we|you|he|she|it|they)['’]ll|promise|guarantee)\b"
-NEGATED_PROMISE = (
+NEGATION = (
     r"\b(?:won['’]t|wouldn['’]t|can['’]t|cannot|don['’]t|doesn['’]t|didn['’]t|"
     r"(?:will|would) (?:not|never)|(?:can|do|does|did) not|"
-    r"(?:not|never|no) (?:a )?guarantee[ds]?|не (?:сделаю|гарантирую|обещаю|успею))\b|['’]ll (?:not|never)\b"
+    r"not|never|no|не)"
+)
+NEGATED_MAIN_PROMISE = (
+    rf"{NEGATION}\s+(?:promise|guarantee|обещаю|гарантирую)\b"
+    r"(?:\s+(?:что|that)\b.*|(?:(?!\b(?:and|и)\b).)*)$"
 )
 
 RU_DEADLINE = (
@@ -81,13 +85,16 @@ RU_PROMISE_VERB = (
     r"починю|починим|выложу|выложим|скину|подготовлю|подготовим|напишу|напишем|посмотрю|посмотрим|"
     r"проверю|проверим|вернусь|отвечу)"
 )
+RU_PROMISE_CONTEXT = rf"\b(?:{RU_PROMISE_VERB}|будет (?:готово|готов|готова|сделано|исправлено)|обещаю|гарантирую)\b"
+BY_DEADLINE = rf"\bby {DEADLINE}\b"
+RU_BY_DEADLINE = rf"\b{RU_BY}\b"
 
 # Concrete promises / deadlines. Warn-only (overridable with allow_promise).
 PROMISES = [
     r"\bi(?:['’]ll| will) (?:(?:have|get|finish|deliver|send|fix|ship|deploy|do)\b|"
     rf"(?!not\b|never\b)[a-z]+\b[^.!?;,\r\n]*?\b{DEADLINE}\b)",
     r"\bwill be (done|ready|fixed|deployed|merged|shipped)\b",
-    rf"\bby {DEADLINE}\b",
+    BY_DEADLINE,
     r"\bguarantee(d|s)?\b",
     r"\bdefinitely\b",
     r"\bi promise\b",
@@ -95,11 +102,19 @@ PROMISES = [
     r"\bno later than\b",
     INTERVAL,
     rf"\b{RU_PROMISE_VERB}\b[^.!?;,\r\n]*?\b{RU_DEADLINE}\b",
-    rf"\b{RU_BY}\b",
+    RU_BY_DEADLINE,
     r"\bбудет (?:готово|готов|готова|сделано|исправлено)\b[^.!?;,\r\n]*?\b(?:завтра|сегодня)\b",
     r"\b(?:гарантирую|обещаю)\b",
     r"\bточно будет готово\b",
 ]
+
+
+def _negated(clause: str, start: int) -> bool:
+    return bool(
+        re.search(rf"{NEGATION}\s+(?:a\s+)?$", clause[:start], re.IGNORECASE)
+        or re.match(rf"{PROMISE_CONTEXT}\s+(?:not|never)\b", clause[start:], re.IGNORECASE)
+        or re.search(NEGATED_MAIN_PROMISE, clause[:start], re.IGNORECASE)
+    )
 
 
 def check(text: str) -> dict:
@@ -118,21 +133,27 @@ def check(text: str) -> dict:
     promise_text = re.sub(
         r"\b(?:but|however|но)\b", lambda match: ";" * len(match.group()), masked, flags=re.IGNORECASE
     )
+    promise_text = re.sub(r",(?=[ \t]*(?:что|that)\b)", " ", promise_text, flags=re.IGNORECASE)
     for clause_match in re.finditer(r"[^.!?;,\r\n]+", promise_text):
         clause = clause_match.group()
         for pat in PROMISES:
             for match in re.finditer(pat, clause, re.IGNORECASE):
-                context = clause[: match.end()]
-                if pat == INTERVAL and not clause[: match.start()].strip():
-                    context = clause
-                if re.search(NEGATED_PROMISE, context, re.IGNORECASE):
+                if _negated(clause, match.start()):
                     continue
-                if pat == INTERVAL and (
-                    not re.search(PROMISE_CONTEXT, context, re.IGNORECASE)
-                    or re.search(r"\b(?:failed|took|ago)\b", context, re.IGNORECASE)
-                    or re.match(r" +ago\b", clause[match.end() :], re.IGNORECASE)
-                ):
-                    continue
+                if pat in (INTERVAL, BY_DEADLINE, RU_BY_DEADLINE):
+                    context = clause[: match.start()]
+                    if not context.strip():
+                        context = clause
+                    context_pattern = RU_PROMISE_CONTEXT if pat == RU_BY_DEADLINE else PROMISE_CONTEXT
+                    cues = list(re.finditer(context_pattern, context, re.IGNORECASE))
+                    standalone_deadline = pat != INTERVAL and clause.strip() == match.group()
+                    if not standalone_deadline and (not cues or _negated(clause, cues[-1].start())):
+                        continue
+                    if pat == INTERVAL and (
+                        re.search(r"\b(?:failed|took|ago)\b", context, re.IGNORECASE)
+                        or re.match(r" +ago\b", clause[match.end() :], re.IGNORECASE)
+                    ):
+                        continue
                 start, end = clause_match.start() + match.start(), clause_match.start() + match.end()
                 warnings.append(f"concrete promise at [{start}:{end}]: {text[start:end]!r}")
 
