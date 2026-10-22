@@ -4,6 +4,7 @@ from typing import Any
 
 from mcp.server.fastmcp.exceptions import ToolError
 
+from . import read_api
 from .app import tool
 from .slack import SlackError, call, workspace_key, write_target
 from .tools_write import enforce_style, message_text, with_warnings
@@ -21,7 +22,7 @@ def _own_message(workspace: str, channel: str, ts: str) -> dict[str, Any]:
     me = call("auth.test", workspace=workspace)["user_id"]
     params = {"channel": channel, "ts": ts, "oldest": ts, "latest": ts, "inclusive": "true"}
     try:
-        messages = call("conversations.replies", workspace=workspace, params=params).get("messages", [])
+        messages = read_api.call("conversations.replies", workspace=workspace, params=params).get("messages", [])
     except SlackError as exc:
         if exc.error != "thread_not_found":
             raise
@@ -188,13 +189,13 @@ def slack_unread(workspace: str, channel_ids: list[str], limit: int = 50) -> dic
     out = []
     for channel in channel_ids:
         try:
-            info = call("conversations.info", workspace=workspace, params={"channel": channel})["channel"]
+            info = read_api.call("conversations.info", workspace=workspace, params={"channel": channel})["channel"]
             last_read = info.get("last_read")
             if not last_read:
                 out.append({"channel": channel, "error": "Slack returned no read marker (last_read) for it"})
                 continue
             params = {"channel": channel, "oldest": last_read, "limit": limit}
-            data = call("conversations.history", workspace=workspace, params=params)
+            data = read_api.call("conversations.history", workspace=workspace, params=params)
         except SlackError as exc:
             out.append({"channel": channel, "error": str(exc)})
             continue

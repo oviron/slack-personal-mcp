@@ -154,3 +154,17 @@ async def test_mark_read(slack, call_tool):
     slack.on("conversations.mark", {"ok": True})
     await call_tool("slack_mark_read", workspace="acme", channel_id="C1", ts="1.0")
     assert body(slack.requests[0]) == {"channel": "C1", "ts": "1.0"}
+
+
+async def test_unread_with_never_read_marker_counts_everything(me, call_tool):
+    me.on("conversations.info", {"ok": True, "channel": {"id": "C1", "last_read": "0000000000.000000"}})
+    me.on("conversations.history", {"ok": True, "messages": [{"ts": "2", "user": "U2"}, {"ts": "1", "user": "U3"}]})
+    out = json.loads(await call_tool("slack_unread", workspace="acme", channel_ids=["C1"]))
+    assert out["channels"] == [{"channel": "C1", "unread": 2}]
+    assert me.calls("conversations.history")[0].url.params["oldest"] == "0000000000.000000"
+
+
+async def test_unread_missing_scope_names_it(me, call_tool):
+    me.on("conversations.info", {"ok": False, "error": "missing_scope"})
+    out = json.loads(await call_tool("slack_unread", workspace="acme", channel_ids=["D1"]))
+    assert "im:read" in out["channels"][0]["error"]
