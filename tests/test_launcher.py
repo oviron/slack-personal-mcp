@@ -14,9 +14,9 @@ pytestmark = pytest.mark.anyio
 @pytest.mark.parametrize(
     ("args", "extra", "count"),
     [
-        ([str(ROOT / "server.py")], {}, 16),
-        (["-m", "slack_personal_mcp"], {}, 16),
-        (["-m", "slack_personal_mcp"], {"SLACK_READ_ONLY": "1"}, 11),
+        ([str(ROOT / "server.py")], {}, 25),
+        (["-m", "slack_personal_mcp"], {}, 25),
+        (["-m", "slack_personal_mcp"], {"SLACK_READ_ONLY": "1"}, 14),
     ],
 )
 async def test_stdio_launch(args, extra, count, tmp_path):

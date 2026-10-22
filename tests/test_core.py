@@ -14,6 +14,12 @@ WRITE = {
     "slack_remove_reaction",
     "slack_upload_file",
     "slack_download_file",
+    "slack_edit_message",
+    "slack_delete_message",
+    "slack_schedule_message",
+    "slack_cancel_scheduled",
+    "slack_set_status",
+    "slack_mark_read",
 }
 
 

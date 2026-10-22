@@ -24,6 +24,14 @@ and AI-slop before sending.
 - `slack_find_channel(workspace, query, limit?, refresh?, types?)`
 - `slack_user_info(workspace, user_id)`
 - `slack_channel_info(workspace, channel_id)`
+- `slack_get_permalink(workspace, channel_id, ts)` - link to a message
+- `slack_edit_message(workspace, channel_id, ts, text, format?, allow_promise?)` - edit one of your own messages; style gate enforced
+- `slack_delete_message(workspace, channel_id, ts)` - delete one of your own messages. Both refuse messages by others, even with an admin token
+- `slack_schedule_message(workspace, channel_id, text, post_at, thread_ts?, reply_broadcast?, format?, allow_promise?)` - schedule a message up to 120 days ahead (`post_at` is ISO 8601 with a timezone or unix seconds)
+- `slack_list_scheduled(workspace, channel_id?, cursor?)`, `slack_cancel_scheduled(workspace, channel_id, scheduled_message_id)` - pending scheduled messages
+- `slack_set_status(workspace, text?, emoji?, expires_in_minutes?)` - set or clear your status (needs `users.profile:write`); style gate on the text
+- `slack_unread(workspace, channel_ids)` - messages after your read marker in up to 20 named channels (Slack's API has no full unread inbox)
+- `slack_mark_read(workspace, channel_id, ts)` - move your read marker (needs `channels:write`, `groups:write`, `im:write` or `mpim:write` for that kind of conversation)
 
 ## Чтение и поиск
 

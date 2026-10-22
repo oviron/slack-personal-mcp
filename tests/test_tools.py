@@ -27,6 +27,15 @@ TOOLS = {
     "slack_find_channel",
     "slack_user_info",
     "slack_channel_info",
+    "slack_get_permalink",
+    "slack_edit_message",
+    "slack_delete_message",
+    "slack_schedule_message",
+    "slack_list_scheduled",
+    "slack_cancel_scheduled",
+    "slack_set_status",
+    "slack_unread",
+    "slack_mark_read",
 }
 
 
