@@ -202,9 +202,15 @@ def slack_find_user(
             if exc.error != "users_not_found":
                 raise
             users = []
-    elif re.fullmatch(r"[UW][A-Z0-9]+", query):
-        users = [call("users.info", workspace=workspace, params={"user": query})["user"]]
     else:
+        users = []
+        if re.fullmatch(r"[UW][A-Z0-9]{6,}", query):
+            try:
+                users = [call("users.info", workspace=workspace, params={"user": query})["user"]]
+            except SlackError as exc:
+                if exc.error != "user_not_found":
+                    raise
+    if not users and not re.fullmatch(r"[^\s@]+@[^\s@]+", query):
         users = [
             user
             for user in cache.directory.users(workspace, refresh)
@@ -276,7 +282,9 @@ def slack_user_info(workspace: str, user_id: str) -> dict[str, Any]:
 def slack_channel_info(workspace: str, channel_id: str) -> dict[str, Any]:
     """Name, kind, topic, purpose, member count and your read marker via conversations.info;
     needs channels:read/groups:read/im:read/mpim:read for the conversation type."""
-    channel = call("conversations.info", workspace=workspace, params={"channel": channel_id})["channel"]
+    channel = call(
+        "conversations.info", workspace=workspace, params={"channel": channel_id, "include_num_members": "true"}
+    )["channel"]
     keys = ("id", "name", "is_private", "is_im", "is_mpim", "is_archived", "user", "num_members", "last_read")
     out = {key: channel.get(key) for key in keys} | {
         "topic": (channel.get("topic") or {}).get("value"),

@@ -220,7 +220,7 @@ def message(m: dict, user_names: dict[str, str] | None = None) -> dict:
             for reaction in m["reactions"]
         ]
     out["attachments_text"] = attachments_text(m.get("attachments") or [])
-    out["blocks_text"] = blocks_text(m.get("blocks") or [], has_text=bool(m.get("text")))
+    out["blocks_text"] = blocks_text(m.get("blocks") or [], m.get("text") or "")
     if m.get("files"):
         out["files"] = [
             {key: value for key, value in file_summary(f).items() if value not in (None, "")} for f in m["files"]

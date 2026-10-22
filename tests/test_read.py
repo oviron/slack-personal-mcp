@@ -119,7 +119,7 @@ async def test_history_cursor_time_bounds_and_projection(slack):
             "reactions": [{"name": "eyes", "count": 2}],
             "files": [{"id": "F1", "name": "build.txt"}],
             "attachments_text": "Build\nFailed\nRetry\nJob: 42",
-            "blocks_text": "Section\nField\nContext",
+            "blocks_text": "Section\nField\nRich link\nItem\nContext",
         }
     ]
 
@@ -327,6 +327,36 @@ async def test_rich_text_is_kept_only_without_text(slack):
     ]
     slack.on("conversations.history", {"ok": True, "messages": [{"ts": "1.0", "text": "hi", "blocks": rich}]})
     assert "blocks_text" not in (await result("slack_read_channel", workspace="acme", channel_id="C1"))["messages"][0]
+
+
+async def test_rich_text_with_more_than_the_fallback_text_is_kept(slack):
+    rich = [
+        {
+            "type": "rich_text",
+            "elements": [
+                {"type": "rich_text_section", "elements": [{"type": "text", "text": "Deploy failed: step 3"}]}
+            ],
+        }
+    ]
+    slack.on(
+        "conversations.history", {"ok": True, "messages": [{"ts": "1.0", "text": "Deploy failed", "blocks": rich}]}
+    )
+    message = (await result("slack_read_channel", workspace="acme", channel_id="C1"))["messages"][0]
+    assert message["blocks_text"] == "Deploy failed: step 3"
+
+
+async def test_id_shaped_name_falls_back_to_name_search(slack):
+    catalogs(slack, users=[{"id": "U1", "name": "william"}])
+    slack.on("users.info", {"ok": False, "error": "user_not_found"})
+    assert await result("slack_find_user", workspace="acme", query="WILLIAM") == {
+        "users": [{"id": "U1", "name": "william"}]
+    }
+
+
+async def test_channel_info_asks_for_member_count(slack):
+    slack.on("conversations.info", {"ok": True, "channel": {"id": "C1", "num_members": 3}})
+    await result("slack_channel_info", workspace="acme", channel_id="C1")
+    assert slack.calls("conversations.info")[0].url.params["include_num_members"] == "true"
 
 
 async def test_unknown_email_finds_nobody(slack):

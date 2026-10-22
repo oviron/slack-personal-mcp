@@ -1,3 +1,6 @@
+import re
+
+
 def attachments_text(attachments: list[dict]) -> str:
     parts = []
     for attachment in attachments:
@@ -29,14 +32,22 @@ def _element_text(element: dict) -> str:
     return separator.join(filter(None, (_element_text(child) for child in element.get("elements", []))))
 
 
-def blocks_text(blocks: list[dict], has_text: bool = False) -> str:
-    """Text from section, context and rich_text blocks. rich_text mirrors the message text people type,
-    so it is skipped when the message already has text."""
+def _letters(text: str) -> str:
+    return re.sub(r"\W+", "", text).casefold()
+
+
+def blocks_text(blocks: list[dict], text: str = "") -> str:
+    """Text from section, context and rich_text blocks. rich_text usually mirrors the message text
+    people type, so a rich_text block whose words are already in text is skipped."""
     parts = []
     for block in blocks:
         if block.get("type") == "section":
             parts.append(_element_text(block.get("text") or {}))
             parts.extend(_element_text(field) for field in block.get("fields", []))
-        elif block.get("type") == "context" or (block.get("type") == "rich_text" and not has_text):
+        elif block.get("type") == "context":
             parts.append(_element_text(block))
+        elif block.get("type") == "rich_text":
+            rich = _element_text(block)
+            if not text or _letters(rich) not in _letters(text):
+                parts.append(rich)
     return "\n".join(part for part in parts if part)
