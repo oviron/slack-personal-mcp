@@ -49,7 +49,7 @@ Slack может вернуть меньше сообщений, поэтому 
 поиске. Также возвращаются `thread_ts`, `reply_count`, `subtype`, `bot_id`, `bot_name`,
 `edited`, реакции с `name` и `count`, файлы в `files`. Текст вложений вынесен в
 `attachments_text` (pretext, title, text, fields), текст блоков в `blocks_text`
-(section, rich_text, context). Пустые поля пропускаются.
+(section, context; rich_text только у сообщений без `text`, иначе он дублирует текст). Пустые поля пропускаются.
 
 `slack_search_messages` сохраняет сырой `query` и добавляет фильтры `in_channel`,
 `from_user`, `before`, `after`, `has` как операторы `in:`, `from:`, `before:`, `after:`,
