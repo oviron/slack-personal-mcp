@@ -32,6 +32,11 @@ and AI-slop before sending.
 - `slack_set_status(workspace, text?, emoji?, expires_in_minutes?)` - set or clear your status (needs `users.profile:write`); style gate on the text
 - `slack_unread(workspace, channel_ids)` - messages after your read marker in up to 20 named channels (Slack's API has no full unread inbox)
 - `slack_mark_read(workspace, channel_id, ts)` - move your read marker (needs `channels:write`, `groups:write`, `im:write` or `mpim:write` for that kind of conversation)
+- `slack_list_emoji(workspace, query?)` - custom emoji by name substring, with URLs or aliases (`emoji:read`)
+- `slack_list_usergroups(workspace, include_users?)` - user groups and counts, optionally member IDs (`usergroups:read`)
+- `slack_get_reactions(workspace, channel_id, ts)` - reaction counts and cached user names (`reactions:read`, `users:read`)
+- `slack_read_canvas(workspace, canvas_id, content_type?)` - full Markdown or HTML via [canvases.getContent](https://docs.slack.dev/reference/methods/canvases.getContent/) (`canvases:read`)
+- `slack_search(workspace, query, content_types?, cursor?, limit?, channel_types?)` - [RTS search](https://docs.slack.dev/reference/methods/assistant.search.context/) for messages, files, channels and users; type lists default to public messages, limit 1-20; internal or directory-published apps only
 
 ## Чтение и поиск
 

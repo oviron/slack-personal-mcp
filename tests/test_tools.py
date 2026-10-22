@@ -36,6 +36,11 @@ TOOLS = {
     "slack_set_status",
     "slack_unread",
     "slack_mark_read",
+    "slack_list_emoji",
+    "slack_list_usergroups",
+    "slack_get_reactions",
+    "slack_read_canvas",
+    "slack_search",
 }
 
 
