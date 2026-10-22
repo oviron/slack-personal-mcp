@@ -20,6 +20,9 @@ WORKSPACE_TOKENS = {
     if name.startswith(TOKEN_PREFIX)
 }
 
+# SLACK_STYLE_GATE=off lets sends through unchecked; slack_lint still works.
+STYLE_GATE = os.environ.get("SLACK_STYLE_GATE", "on").strip().lower() not in ("0", "off", "false", "no")
+
 mcp = FastMCP("slack-personal")
 
 
@@ -131,13 +134,14 @@ def slack_send_message(
     allow_promise: bool = False,
 ) -> str:
     """Post a Slack message AS THE USER (no app badge), via personal user token.
-    Style gate (enforced before send): no AI typography (em/en dash, ellipsis char,
-    curly quotes, nbsp, bullet) - use plain ASCII; no AI-slop phrases; no concrete
-    promises/deadlines unless allow_promise=true. Short, plain English, the user's own voice.
+    Style gate (enforced before send unless SLACK_STYLE_GATE=off): no AI typography
+    (em/en dash, ellipsis char, curly quotes, nbsp, bullet) - use plain ASCII; no AI-slop
+    phrases; no concrete promises/deadlines unless allow_promise=true. Write short and
+    plain, in the user's own voice and language.
     workspace: explicit alias from slack_list_workspaces. channel_id: channel/DM id
     (e.g. C..., D...). thread_ts: reply in a thread if set.
     """
-    result = check(text)
+    result = check(text) if STYLE_GATE else {"errors": [], "warnings": []}
     if result["errors"] or (result["warnings"] and not allow_promise):
         return "REFUSED - rewrite before sending.\n" + format_violations(result, allow_promise)
     body: dict = {"channel": channel_id, "text": text}
@@ -189,7 +193,7 @@ def slack_upload_file(
     (your own id = your self-DM; needs im:write). thread_ts: upload as a thread reply.
     file_path: absolute path on this machine. title: file title, defaults to the filename.
     """
-    if initial_comment:
+    if initial_comment and STYLE_GATE:
         result = check(initial_comment)
         if result["errors"] or (result["warnings"] and not allow_promise):
             return "REFUSED - rewrite the comment before sending.\n" + format_violations(result, allow_promise)
