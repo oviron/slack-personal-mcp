@@ -1,0 +1,42 @@
+[project]
+name = "slack-personal-mcp"
+version = "0.1.0"
+description = "MCP server for Slack on personal user tokens: posts as you, with file tools and an optional anti-AI-slop style gate"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.30,<2",
+    "httpx>=0.28,<1",
+    "python-dotenv>=1.0,<2",
+]
+
+[project.scripts]
+slack-personal-mcp = "slack_personal_mcp.server:main"
+
+[project.urls]
+Repository = "https://github.com/oviron/slack-personal-mcp"
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "ruff>=0.17",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slack_personal_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

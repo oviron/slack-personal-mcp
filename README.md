@@ -27,7 +27,7 @@ Read and search results list message attachments under `files` (id, name, type, 
 
 ## Style gate
 
-`style.py` runs on every send:
+`src/slack_personal_mcp/style.py` runs on every send:
 
 - **errors (hard block)**: AI typography (em/en dash, ellipsis char, curly quotes, nbsp, bullet) and AI-slop phrases.
 - **warnings (block unless `allow_promise=true`)**: concrete promises / deadlines.
@@ -37,12 +37,11 @@ The phrase lists are English. Set `SLACK_STYLE_GATE=off` to send without the gat
 
 ## Setup
 
-Requires Python 3.10+.
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python style.py        # self-test
+uv sync                # creates .venv with the locked dependencies
+uv run pytest          # offline tests
 ```
 
 ### Slack app and token
@@ -84,7 +83,7 @@ reinstall the app and replace the token.
 ### Configuration
 
 Tokens are read from the environment, or from `.env` next to `server.py` (gitignored;
-keep it `chmod 600`):
+keep it `chmod 600`; `.env.example` is a template):
 
 ```dotenv
 SLACK_USER_TOKEN_ACME=xoxp-...
