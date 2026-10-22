@@ -613,3 +613,22 @@ async def test_read_output_schemas():
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     for name in names:
         assert tools[name].outputSchema["type"] == "object", name
+
+
+async def test_rich_text_compares_whole_words(slack):
+    rich = [
+        {
+            "type": "rich_text",
+            "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": "available"}]}],
+        }
+    ]
+    slack.on("conversations.history", {"ok": True, "messages": [{"ts": "1.0", "text": "unavailable", "blocks": rich}]})
+    message = (await result("slack_read_channel", workspace="acme", channel_id="C1"))["messages"][0]
+    assert message["blocks_text"] == "available"
+
+
+async def test_blocks_inside_attachments_are_read(slack):
+    section = {"type": "section", "text": {"type": "mrkdwn", "text": "Build failed"}}
+    slack.on("conversations.history", {"ok": True, "messages": [{"ts": "1.0", "attachments": [{"blocks": [section]}]}]})
+    message = (await result("slack_read_channel", workspace="acme", channel_id="C1"))["messages"][0]
+    assert message["attachments_text"] == "Build failed"

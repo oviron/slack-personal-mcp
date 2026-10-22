@@ -7,6 +7,7 @@ def attachments_text(attachments: list[dict]) -> str:
         parts.extend(attachment[key] for key in ("pretext", "title", "text") if attachment.get(key))
         for field in attachment.get("fields", []):
             parts.append(": ".join(str(field[key]) for key in ("title", "value") if field.get(key)))
+        parts.append(blocks_text(attachment.get("blocks") or []))
     return "\n".join(part for part in parts if part)
 
 
@@ -32,8 +33,8 @@ def _element_text(element: dict) -> str:
     return separator.join(filter(None, (_element_text(child) for child in element.get("elements", []))))
 
 
-def _letters(text: str) -> str:
-    return re.sub(r"\W+", "", text).casefold()
+def _words(text: str) -> str:
+    return " " + " ".join(re.findall(r"\w+", text.casefold())) + " "
 
 
 def blocks_text(blocks: list[dict], text: str = "") -> str:
@@ -48,6 +49,6 @@ def blocks_text(blocks: list[dict], text: str = "") -> str:
             parts.append(_element_text(block))
         elif block.get("type") == "rich_text":
             rich = _element_text(block)
-            if not text or _letters(rich) not in _letters(text):
+            if not text or _words(rich) not in _words(text):
                 parts.append(rich)
     return "\n".join(part for part in parts if part)
