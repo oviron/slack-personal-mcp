@@ -3,13 +3,12 @@ import os
 
 import httpx
 
-from .app import mcp
-from .config import style_gate_enabled
-from .slack import call, file_summary, resolve_channel, token, workspace_key
-from .style import check, format_violations
+from .app import tool
+from .slack import call, check_write_target, file_summary, resolve_channel, token, workspace_key
+from .tools_write import enforce_style
 
 
-@mcp.tool()
+@tool(write=True)
 def slack_upload_file(
     workspace: str,
     channel_id: str,
@@ -25,10 +24,8 @@ def slack_upload_file(
     (your own id = your self-DM; needs im:write). thread_ts: upload as a thread reply.
     file_path: absolute path on this machine. title: file title, defaults to the filename.
     """
-    if initial_comment and style_gate_enabled():
-        result = check(initial_comment)
-        if result["errors"] or (result["warnings"] and not allow_promise):
-            return "REFUSED - rewrite the comment before sending.\n" + format_violations(result, allow_promise)
+    if initial_comment:
+        enforce_style(initial_comment, allow_promise, "the comment")
 
     path = os.path.expanduser(file_path)
     if not os.path.isfile(path):
@@ -37,7 +34,9 @@ def slack_upload_file(
     if size == 0:
         raise RuntimeError(f"Refusing to upload an empty file: {path}")
     name = os.path.basename(path)
-    channel_id = resolve_channel(workspace, channel_id)
+    target = resolve_channel(workspace, channel_id)
+    check_write_target(target, channel_id)
+    channel_id = target
 
     ticket = call(
         "files.getUploadURLExternal",
@@ -62,7 +61,7 @@ def slack_upload_file(
     return f"uploaded workspace={workspace_key(workspace)} file_id={shared.get('id')} name={name} channel={channel_id}"
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_file_info(workspace: str, file_id: str) -> str:
     """File metadata by id (files.info, needs files:read): name, type, size, owner, where shared."""
     f = call("files.info", workspace=workspace, params={"file": file_id})["file"]
@@ -75,7 +74,7 @@ def slack_file_info(workspace: str, file_id: str) -> str:
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_list_files(workspace: str, channel_id: str = "", user_id: str = "", types: str = "", count: int = 20) -> str:
     """List files, newest first (files.list, needs files:read). Filter by channel_id and/or
     user_id (uploader). types: comma list of all, spaces, snippets, images, gdocs, zips, pdfs.
@@ -92,7 +91,7 @@ def slack_list_files(workspace: str, channel_id: str = "", user_id: str = "", ty
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=True, destructive=True)
 def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloads/slack") -> str:
     """Download a Slack file by id to a local folder (needs files:read). Returns the saved path.
     Saved as <file_id>-<name> so repeated downloads overwrite the same file.

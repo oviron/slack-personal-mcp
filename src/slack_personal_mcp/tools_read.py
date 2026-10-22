@@ -1,11 +1,11 @@
 import json
 
-from .app import mcp
+from .app import tool
 from .config import workspace_tokens
 from .slack import call, file_summary, message
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_list_workspaces() -> str:
     """List configured workspace aliases and verify which Slack account each token belongs to."""
     out = []
@@ -28,7 +28,7 @@ def slack_list_workspaces() -> str:
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_search_messages(workspace: str, query: str, count: int = 15) -> str:
     """Search messages you can see (search:read). Slack search syntax supported."""
     data = call("search.messages", workspace=workspace, params={"query": query, "count": count})
@@ -48,7 +48,7 @@ def slack_search_messages(workspace: str, query: str, count: int = 15) -> str:
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_read_channel(workspace: str, channel_id: str, limit: int = 20) -> str:
     """Read recent messages in a channel/DM (conversations.history)."""
     data = call(
@@ -60,7 +60,7 @@ def slack_read_channel(workspace: str, channel_id: str, limit: int = 20) -> str:
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_read_thread(workspace: str, channel_id: str, thread_ts: str, limit: int = 50) -> str:
     """Read a full thread (conversations.replies)."""
     data = call(
@@ -72,7 +72,7 @@ def slack_read_thread(workspace: str, channel_id: str, thread_ts: str, limit: in
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_find_user(workspace: str, query: str, limit: int = 10) -> str:
     """Resolve a person to their user id by name/display name/email (scans users.list)."""
     q = query.lower()
@@ -107,7 +107,7 @@ def slack_find_user(workspace: str, query: str, limit: int = 10) -> str:
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@tool(write=False)
 def slack_find_channel(workspace: str, query: str, limit: int = 15) -> str:
     """Find channel ids by name (conversations.list, public + private you are in)."""
     q = query.lower()
