@@ -36,7 +36,11 @@ never retried: the error says the outcome is unknown, so check the channel first
 - **errors (hard block)**: AI typography (em/en dash, ellipsis char, curly quotes, nbsp, bullet) and AI-slop phrases.
 - **warnings (block unless `allow_promise=true`)**: concrete promises / deadlines.
 
-The phrase lists are English. Set `SLACK_STYLE_GATE=off` to send without the gate;
+Code spans and blocks, URLs, Slack mentions (`<@U...>`, `<#C...>`, `<!here>`) and quoted
+lines are skipped; link labels are checked like any other text;
+diagnostics include zero-based character ranges in the original text. Phrase lists
+cover English and common Russian slop and promises; typography rules apply to both
+languages. Set `SLACK_STYLE_GATE=off` to send without the gate;
 `slack_lint` keeps working either way.
 
 ## Setup
