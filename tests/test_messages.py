@@ -100,6 +100,8 @@ async def test_list_and_cancel_scheduled(slack, call_tool):
     )  # fmt: skip
     out = json.loads(await call_tool("slack_list_scheduled", workspace="acme"))
     assert [m["id"] for m in out["scheduled"]] == ["Q1", "Q2"] and out["next_cursor"] is None
+    await call_tool("slack_list_scheduled", workspace="acme", cursor="c2")
+    assert slack.calls("chat.scheduledMessages.list")[1].url.params["cursor"] == "c2"
     slack.on("chat.deleteScheduledMessage", {"ok": True})
     await call_tool("slack_cancel_scheduled", workspace="acme", channel_id="C1", scheduled_message_id="Q1")
     assert body(slack.calls("chat.deleteScheduledMessage")[0]) == {"channel": "C1", "scheduled_message_id": "Q1"}
@@ -139,6 +141,13 @@ async def test_unread_counts_others_messages_after_marker(me, call_tool):
     assert me.calls("conversations.history")[0].url.params["oldest"] == "100.0"
     with pytest.raises(ToolError, match="1 to 20"):
         await call_tool("slack_unread", workspace="acme", channel_ids=[])
+
+
+async def test_unread_without_read_marker_is_unknown(me, call_tool):
+    me.on("conversations.info", {"ok": True, "channel": {"id": "C1", "name": "general"}})
+    out = json.loads(await call_tool("slack_unread", workspace="acme", channel_ids=["C1"]))
+    assert out["channels"] == [{"channel": "C1", "error": "Slack returned no read marker (last_read) for it"}]
+    assert me.calls("conversations.history") == []
 
 
 async def test_mark_read(slack, call_tool):

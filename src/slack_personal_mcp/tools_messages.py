@@ -123,11 +123,15 @@ def slack_schedule_message(
 
 
 @tool(write=False)
-def slack_list_scheduled(workspace: str, channel_id: str = "", limit: int = 100) -> dict[str, Any]:
-    """Your messages scheduled but not yet sent (chat.scheduledMessages.list), soonest first."""
+def slack_list_scheduled(workspace: str, channel_id: str = "", limit: int = 100, cursor: str = "") -> dict[str, Any]:
+    """Your messages scheduled but not yet sent (chat.scheduledMessages.list), soonest first within
+    a page. Pass next_cursor as cursor for the next page.
+    """
     params: dict = {"limit": limit}
     if channel_id:
         params["channel"] = channel_id
+    if cursor:
+        params["cursor"] = cursor
     data = call("chat.scheduledMessages.list", workspace=workspace, params=params)
     items = sorted(data.get("scheduled_messages", []), key=lambda m: m.get("post_at", 0))
     return {
@@ -185,7 +189,10 @@ def slack_unread(workspace: str, channel_ids: list[str], limit: int = 50) -> dic
     for channel in channel_ids:
         try:
             info = call("conversations.info", workspace=workspace, params={"channel": channel})["channel"]
-            last_read = info.get("last_read") or "0"
+            last_read = info.get("last_read")
+            if not last_read:
+                out.append({"channel": channel, "error": "Slack returned no read marker (last_read) for it"})
+                continue
             params = {"channel": channel, "oldest": last_read, "limit": limit}
             data = call("conversations.history", workspace=workspace, params=params)
         except SlackError as exc:
@@ -193,7 +200,7 @@ def slack_unread(workspace: str, channel_ids: list[str], limit: int = 50) -> dic
             continue
         unread = [m for m in data.get("messages", []) if m.get("user") != me]
         row = {"channel": channel, "name": info.get("name"), "unread": len(unread), "has_more": data.get("has_more")}
-        if last_read != "0":
+        if last_read != "0000000000.000000":
             row["last_read"] = iso(last_read)
         out.append({k: v for k, v in row.items() if v is not None})
     return {"channels": out}
