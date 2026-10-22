@@ -172,7 +172,7 @@ def test_post_body_is_json(slack):
         ({"error": "missing_scope", "needed": "reactions:write"}, "add user token scope reactions:write, reinstall"),
         ({"error": "not_in_channel"}, "not_in_channel; join the conversation"),
         ({"error": "token_revoked"}, "revoked: create a new user token"),
-        ({"error": "token_expired"}, "token rotation is on"),
+        ({"error": "token_expired"}, "cannot be turned off: create a new app"),
         ({"error": "something_new"}, r"something_new$"),
     ],
 )

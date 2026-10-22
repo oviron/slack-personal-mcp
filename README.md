@@ -24,8 +24,8 @@ something. `SLACK_READ_ONLY=1` leaves the 19 R tools.
 | `slack_list_workspaces()` | R | Configured aliases and whose token each one is (`auth.test`) | none |
 | `slack_lint(text)` | R | Run the style gate on a draft without sending | none |
 | `slack_send_message(workspace, channel_id, text, thread_ts?, reply_broadcast?, format?, unfurl_links?, allow_promise?)` | W | Post as you | `chat:write` |
-| `slack_edit_message(workspace, channel_id, ts, text, format?, allow_promise?)` | W | Edit one of your messages | `chat:write` |
-| `slack_delete_message(workspace, channel_id, ts)` | D | Delete one of your messages | `chat:write` |
+| `slack_edit_message(workspace, channel_id, ts, text, format?, allow_promise?)` | W | Edit one of your messages | `chat:write`; `*:history` by type to check the author |
+| `slack_delete_message(workspace, channel_id, ts)` | D | Delete one of your messages | `chat:write`; `*:history` by type to check the author |
 | `slack_schedule_message(workspace, channel_id, text, post_at, thread_ts?, reply_broadcast?, format?, allow_promise?)` | W | Schedule a message up to 120 days ahead | `chat:write` |
 | `slack_list_scheduled(workspace, channel_id?, limit?, cursor?)` | R | Your scheduled messages, soonest first | none |
 | `slack_cancel_scheduled(workspace, channel_id, scheduled_message_id)` | D | Cancel a scheduled message | `chat:write` |
@@ -39,10 +39,10 @@ something. `SLACK_READ_ONLY=1` leaves the 19 R tools.
 | `slack_read_channel(workspace, channel_id, limit?, cursor?, oldest?, latest?, inclusive?)` | R | One page of channel or DM history | `channels:history`, `groups:history`, `im:history`, `mpim:history` by type |
 | `slack_read_thread(workspace, channel_id, thread_ts, limit?, cursor?, oldest?, latest?, inclusive?, all_pages?, max_pages?)` | R | A thread, one page or all of it | same as above |
 | `slack_search_messages(workspace, query, count?, page?, sort?, sort_dir?, in_channel?, from_user?, before?, after?, has?)` | R | Message search with Slack query syntax | `search:read` |
-| `slack_search(workspace, query, content_types?, cursor?, limit?, channel_types?)` | R | Real-time Search over messages, files, channels and users | `search:read.public`, plus `.private`, `.im`, `.mpim`, `.files`, `.users` for those types |
+| `slack_search(workspace, query, content_types?, cursor?, limit?, channel_types?)` | R | Real-time Search over messages, files, channels and users | `search:read.public`; `search:read.private`, `search:read.im`, `search:read.mpim`, `search:read.files`, `search:read.users` for those types |
 | `slack_find_user(workspace, query, limit?, refresh?)` | R | People by name, exact email or `U...` id | `users:read`; `users:read.email` for email |
-| `slack_find_channel(workspace, query, limit?, refresh?, types?)` | R | Conversations by name, including DMs with `types="im,mpim"` | `channels:read`, `groups:read`, `im:read`, `mpim:read` by type |
-| `slack_user_info(workspace, user_id)` | R | Name, title, email, timezone, status | `users:read` |
+| `slack_find_channel(workspace, query, limit?, refresh?, types?)` | R | Conversations by name, including DMs with `types="im,mpim"` | `channels:read`, `groups:read`, `im:read`, `mpim:read` by type; `users:read` for DM names |
+| `slack_user_info(workspace, user_id)` | R | Name, title, email, timezone, status | `users:read`; `users:read.email` for the email |
 | `slack_channel_info(workspace, channel_id)` | R | Name, topic, purpose, member count, your read marker | `*:read` by type |
 | `slack_list_usergroups(workspace, include_users?)` | R | User groups and member counts | `usergroups:read` |
 | `slack_list_emoji(workspace, query?)` | R | Custom emoji | `emoji:read` |
@@ -52,7 +52,8 @@ something. `SLACK_READ_ONLY=1` leaves the 19 R tools.
 | `slack_list_files(workspace, channel_id?, user_id?, types?, count?, page?)` | R | Files in a channel or by a person, newest first | `files:read` |
 | `slack_download_file(workspace, file_id, dest_dir?)` | D | Save a file locally (default `~/Downloads/slack`) | `files:read` |
 
-Message authors get names from a directory cache, which needs `users:read`. In every
+`*:read` and `*:history` stand for the `channels:`, `groups:`, `im:` or `mpim:` scope that
+matches the conversation type. Message authors get names from a directory cache, which needs `users:read`. In every
 writing tool `channel_id` may be a user id `U...`: the message, file or reaction goes to
 your DM with that person, which needs `im:write`.
 
@@ -152,9 +153,10 @@ before installing; the matching tools then fail with `missing_scope`. `channels:
 and `groups:write` are only for `slack_mark_read`, but they also allow managing channels,
 so leave them out if you don't need it.
 
-Keep token rotation off (the manifest sets `token_rotation_enabled: false`). With
-rotation on, Slack issues `xoxe.xoxp-` tokens that expire after 12 hours, and this server
-does not refresh them.
+Keep token rotation off: the manifest sets `token_rotation_enabled: false`. With rotation
+on, Slack issues `xoxe.xoxp-` tokens that expire after 12 hours, this server does not
+refresh them, and Slack does not let you turn rotation off again. An app with rotation on
+has to be replaced by a new one.
 
 The app is internal to your workspace, so Slack's
 [May 2025 rate limits](https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps)
@@ -235,7 +237,7 @@ SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.c
 | `not_in_channel` | Join the conversation in Slack first |
 | `channel_not_found` | Check the id; private conversations and DMs need you to be a member |
 | `invalid_auth`, `token_revoked`, `account_inactive` | Create a new user token and replace it in `.env` |
-| `token_expired` | Token rotation is on: turn it off, reinstall, replace the token |
+| `token_expired` | Token rotation is on and cannot be turned off: create a new app from the manifest and use its token |
 | `ratelimited` | The server already waited for `Retry-After` within 30 seconds; try again later |
 | `outcome unknown` | A send failed after it left your machine and was not retried; check the channel before sending again |
 | `feature_not_enabled` from `slack_search` | Real-time Search is not available in this workspace; use `slack_search_messages` |

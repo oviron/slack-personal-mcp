@@ -38,7 +38,8 @@ ERROR_HINTS = {
     "invalid_auth": f"the token is not valid: {_NEW_TOKEN}",
     "token_revoked": f"the token was revoked: {_NEW_TOKEN}",
     "account_inactive": f"the account or app was deactivated: {_NEW_TOKEN}",
-    "token_expired": f"token rotation is on: turn it off in the app settings, reinstall, {_NEW_TOKEN}",
+    "token_expired": "token rotation is on and cannot be turned off: create a new app from slack-app-manifest.yaml "
+    "and put its user token in .env",
     "not_allowed_token_type": "use a user token (xoxp-), not a bot token",
 }
 
