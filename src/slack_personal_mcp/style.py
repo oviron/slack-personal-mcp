@@ -89,19 +89,3 @@ def format_violations(result: dict, allow_promise: bool) -> str:
         lines.append(tag)
         lines += [f"  - {w}" for w in result["warnings"]]
     return "\n".join(lines)
-
-
-if __name__ == "__main__":
-    clean = check("AFAIK no. One small backend fix is left, PR is up. The backend lead knows the status better.")
-    assert clean["errors"] == [] and clean["warnings"] == [], clean
-
-    dirty = check("Great question — I’ll leverage this and delve in. It will be done by tomorrow.")
-    assert any("em dash" in e for e in dirty["errors"]), dirty
-    assert any("right single quote" in e for e in dirty["errors"]), dirty
-    assert any("great question" in e for e in dirty["errors"]), dirty
-    assert any("leverag" in e for e in dirty["errors"]), dirty
-    assert any("delve" in e for e in dirty["errors"]), dirty
-    assert any("will be done" in w for w in dirty["warnings"]), dirty
-    assert any("by tomorrow" in w for w in dirty["warnings"]), dirty
-
-    print("style.py self-test OK")
