@@ -1,12 +1,11 @@
 import logging
 import os
-import re
 import threading
 import time
 
 import httpx
 
-from .config import workspace_tokens, write_channels
+from .config import alias, workspace_tokens, write_channels
 
 SLACK = "https://slack.com/api"
 
@@ -56,7 +55,7 @@ def client() -> httpx.Client:
 
 
 def workspace_key(workspace: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", workspace.strip().lower()).strip("-")
+    return alias(workspace)
 
 
 def token(workspace: str) -> str:
