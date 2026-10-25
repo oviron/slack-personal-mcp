@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 
 import httpx
 import pytest
@@ -13,6 +14,21 @@ pytestmark = pytest.mark.anyio
 
 UPLOAD_URL = "https://files.slack.com/upload/v1/x"
 FILE_URL = "https://files.slack.com/d/a.txt"
+WINDOWS = os.name == "nt"
+
+
+def symlink(link, target):
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except OSError:  # Windows without Developer Mode or admin rights
+        pytest.skip("this system cannot create symlinks")
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # what expanduser reads on Windows
+    return tmp_path
 
 
 @pytest.fixture
@@ -37,7 +53,7 @@ def secret(tmp_path):
 
 async def test_upload_refuses_hidden_files_even_through_symlinks(slack, call_tool, tmp_path, secret):
     link = tmp_path / "innocent.txt"
-    link.symlink_to(secret)
+    symlink(link, secret)
     for path in (secret, link):
         with pytest.raises(ToolError, match="hidden"):
             await upload(call_tool, path)
@@ -58,12 +74,57 @@ async def test_upload_refuses_paths_outside_roots(slack, call_tool, tmp_path, mo
     assert slack.requests == []
 
 
-async def test_upload_refuses_library_by_default(slack, call_tool, tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / "Library").mkdir()
-    (tmp_path / "Library" / "cookies").write_text("x")
+async def test_upload_refuses_library_by_default(slack, call_tool, home):
+    (home / "Library").mkdir()
+    (home / "Library" / "cookies").write_text("x")
     with pytest.raises(ToolError, match="Library"):
-        await upload(call_tool, tmp_path / "Library" / "cookies")
+        await upload(call_tool, home / "Library" / "cookies")
+
+
+async def test_upload_refuses_appdata_by_default(slack, call_tool, home):
+    (home / "AppData" / "Roaming").mkdir(parents=True)
+    (home / "AppData" / "Roaming" / "token").write_text("x")
+    with pytest.raises(ToolError, match="~/AppData is off limits"):
+        await upload(call_tool, home / "AppData" / "Roaming" / "token")
+    assert slack.requests == []
+
+
+def test_temp_folder_inside_appdata_stays_allowed(home, monkeypatch):
+    """On Windows the default temp folder is ~/AppData/Local/Temp: the more specific root wins."""
+    temp = home / "AppData" / "Local" / "Temp"
+    temp.mkdir(parents=True)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp))
+    assert tools_files.allowed_path(str(temp / "a.txt")) == os.path.realpath(temp / "a.txt")
+    with pytest.raises(ToolError, match="AppData"):
+        tools_files.allowed_path(str(home / "AppData" / "Local" / "other.txt"))
+
+
+@pytest.mark.skipif(not WINDOWS, reason="Windows paths ignore case")
+def test_roots_match_in_any_case_on_windows(tmp_path, monkeypatch):
+    monkeypatch.setenv("SLACK_FILE_ROOTS", str(tmp_path).lower())
+    path = str(tmp_path / "a.txt").upper()
+    assert os.path.normcase(tools_files.allowed_path(path)) == os.path.normcase(str(tmp_path / "a.txt"))
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("\\\\?\\C:\\Users\\a.txt", "C:\\Users\\a.txt"),
+        ("\\\\?\\UNC\\srv\\share\\a.txt", "\\\\srv\\share\\a.txt"),
+        ("C:\\Users\\a.txt", "C:\\Users\\a.txt"),
+    ],
+)
+def test_dos_path(raw, expected):
+    assert tools_files.dos_path(raw) == expected
+
+
+def test_fd_path_is_where_the_file_really_is(tmp_path):
+    (tmp_path / "a.txt").write_text("x")
+    fd = os.open(tmp_path / "a.txt", os.O_RDONLY)
+    try:
+        assert os.path.normcase(tools_files.fd_path(fd)) == os.path.normcase(os.path.realpath(tmp_path / "a.txt"))
+    finally:
+        os.close(fd)
 
 
 async def test_upload_title_goes_through_style_gate(slack, call_tool, tmp_path):
@@ -203,14 +264,14 @@ async def test_lint_is_structured(call_tool):
     assert out == {"clean": True, "errors": [], "warnings": []}
 
 
-async def test_upload_refuses_library_in_any_case(slack, call_tool, tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / "library").mkdir()
-    (tmp_path / "library" / "cookies").write_text("x")
+async def test_upload_refuses_library_in_any_case(slack, call_tool, home):
+    (home / "library").mkdir()
+    (home / "library" / "cookies").write_text("x")
     with pytest.raises(ToolError, match="Library"):
-        await upload(call_tool, tmp_path / "library" / "cookies")
+        await upload(call_tool, home / "library" / "cookies")
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs on Windows")
 async def test_upload_refuses_fifo_without_hanging(slack, call_tool, tmp_path):
     os.mkfifo(tmp_path / "pipe")
     with pytest.raises(ToolError, match="regular file"):
@@ -234,7 +295,7 @@ def test_open_rechecks_where_the_file_landed(tmp_path, secret, monkeypatch):
 
 async def test_download_into_symlinked_folder_lands_in_the_target(slack, call_tool, tmp_path):
     (tmp_path / "real").mkdir()
-    (tmp_path / "link").symlink_to(tmp_path / "real")
+    symlink(tmp_path / "link", tmp_path / "real")
     file_info(slack, size=3)
     slack.on(FILE_URL, lambda r: httpx.Response(200, content=b"abc"))
     out = json.loads(await download(call_tool, tmp_path / "link"))
@@ -251,15 +312,33 @@ async def test_download_folder_swapped_mid_transfer_keeps_the_opened_folder(slac
     (tmp_path / "dest").mkdir()
     (tmp_path / ".hidden").mkdir()
     file_info(slack, size=3)
+    landed = tmp_path / "moved"
 
     def swap_then_reply(request):
-        (tmp_path / "dest").rename(tmp_path / "moved")
-        (tmp_path / "dest").symlink_to(tmp_path / ".hidden")
+        nonlocal landed
+        try:
+            (tmp_path / "dest").rename(tmp_path / "moved")
+        except PermissionError:  # Windows refuses to move a folder with an open file inside
+            assert WINDOWS
+            landed = tmp_path / "dest"
+        else:
+            (tmp_path / "dest").symlink_to(tmp_path / ".hidden", target_is_directory=True)
         return httpx.Response(200, content=b"abc")
 
     slack.on(FILE_URL, swap_then_reply)
     await download(call_tool, tmp_path / "dest")
-    assert (tmp_path / "moved" / "F1-a.txt").read_bytes() == b"abc"
+    assert (landed / "F1-a.txt").read_bytes() == b"abc"
+    assert os.listdir(tmp_path / ".hidden") == []
+
+
+async def test_download_folder_swapped_before_the_part_file_is_refused(slack, call_tool, tmp_path, monkeypatch):
+    """The folder checked and the folder the part file landed in differ: nothing is written there."""
+    (tmp_path / ".hidden").mkdir()
+    monkeypatch.setattr(tools_files, "make_allowed_dirs", lambda p: str(tmp_path / ".hidden"))
+    file_info(slack, size=3)
+    slack.on(FILE_URL, lambda r: httpx.Response(200, content=b"abc"))
+    with pytest.raises(ToolError, match="hidden"):
+        await download(call_tool, tmp_path / "dest")
     assert os.listdir(tmp_path / ".hidden") == []
 
 

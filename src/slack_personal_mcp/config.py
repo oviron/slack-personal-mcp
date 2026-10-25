@@ -50,5 +50,6 @@ def file_roots() -> tuple[list[str], bool]:
     """SLACK_FILE_ROOTS (separated by os.pathsep): folders upload reads from and download writes to.
     Default: home and the temp folders. Returns resolved roots and whether they were set explicitly."""
     raw = os.environ.get("SLACK_FILE_ROOTS", "").strip()
-    parts = [p.strip() for p in raw.split(os.pathsep) if p.strip()] if raw else ["~", tempfile.gettempdir(), "/tmp"]
+    default = ["~", tempfile.gettempdir()] + ([] if os.name == "nt" else ["/tmp"])
+    parts = [p.strip() for p in raw.split(os.pathsep) if p.strip()] if raw else default
     return [os.path.realpath(os.path.expanduser(p)) for p in parts], bool(raw)
