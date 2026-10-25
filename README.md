@@ -78,9 +78,10 @@ allow it.
 
 **Files.** `slack_upload_file` reads and `slack_download_file` writes only inside
 `SLACK_FILE_ROOTS` (default: home and the temp folders). Hidden files and folders such as
-`~/.ssh` or `.env`, and `~/Library` under the default roots, are refused, symlinks
-included. Downloads go to a temporary file and replace an existing copy only once the
-size matches. Files stored outside Slack return their `external_url` instead.
+`~/.ssh` or `.env`, and `~/Library` and `~/AppData` under the default roots, are refused,
+symlinks included. Downloads go to a temporary file and replace an existing copy only once
+the size matches. Files stored outside Slack return their `external_url` instead. The file
+tools work on macOS, Linux and Windows.
 
 **Pages.** Reads return one page at a time and say whether more exist.
 `slack_read_channel` returns `{messages, next_cursor, has_more}`: pass `next_cursor` back
@@ -187,7 +188,7 @@ Each `SLACK_USER_TOKEN_<ALIAS>` adds a workspace; `SIDE_PROJECT` becomes the ali
 | `SLACK_ENV_FILE` | Read this file instead of `.env` next to `server.py`; empty reads none |
 | `SLACK_STYLE_GATE` | `off` sends without the style gate (default on) |
 | `SLACK_READ_ONLY` | `1` hides every tool that changes Slack or local files |
-| `SLACK_FILE_ROOTS` | Folders, separated by `:`, that uploads read from and downloads write to; default home and temp |
+| `SLACK_FILE_ROOTS` | Folders, separated by `:` (`;` on Windows), that uploads read from and downloads write to; default home and temp |
 | `SLACK_WRITE_CHANNELS` | Comma-separated ids (`C...`, `D...`, `U...`) writes may target; a DM by user id needs that `U...` listed; unset allows any |
 
 ## Registering with a client

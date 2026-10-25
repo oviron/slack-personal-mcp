@@ -1,5 +1,5 @@
 import contextlib
-import fcntl
+import ctypes
 import json
 import os
 import secrets
@@ -14,46 +14,86 @@ from .config import file_roots
 from .slack import OutcomeUnknown, SlackError, call, client, file_summary, token, workspace_key, write_target
 from .tools_write import enforce_style
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+
 MAX_FILE = 1 << 30  # Slack's own upload limit is 1 GB
+# Windows has none of the first two: a final symlink is followed there, and the recheck in open_allowed
+# refuses wherever it lands; there are no FIFOs to hang on either.
+OPEN_FLAGS = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+# Under home they hold browser profiles, keychains and app tokens; casefold, as macOS and Windows ignore case.
+PRIVATE_HOME_DIRS = {"library": "~/Library", "appdata": "~/AppData"}
 
 
 def allowed_path(path: str) -> str:
-    """Resolve an absolute path (symlinks included) and refuse it outside SLACK_FILE_ROOTS,
-    under a hidden file or folder, or in ~/Library unless the roots were set explicitly."""
+    """Resolve an absolute path (symlinks included) and refuse it outside SLACK_FILE_ROOTS, under a hidden
+    file or folder, or in ~/Library or ~/AppData unless the roots were set explicitly."""
     expanded = os.path.expanduser(path)
     if not os.path.isabs(expanded):
         raise ToolError(f"Path must be absolute: {path}")
     real = os.path.realpath(expanded)
     roots, explicit = file_roots()
-    for root in roots:
-        if real != root and not real.startswith(root.rstrip(os.sep) + os.sep):
+    key = os.path.normcase(real)
+    # The most specific root first: on Windows the default temp folder lies under ~/AppData.
+    for root in sorted(roots, key=len, reverse=True):
+        base = os.path.normcase(root)
+        if key != base and not key.startswith(base.rstrip(os.sep) + os.sep):
             continue
-        parts = [] if real == root else os.path.relpath(real, root).split(os.sep)
+        parts = [] if key == base else os.path.relpath(real, root).split(os.sep)
         if any(p.startswith(".") for p in parts):
             raise ToolError(f"Refusing {path}: hidden files and folders are off limits")
-        home = os.path.realpath(os.path.expanduser("~"))
-        # casefold: macOS file systems usually ignore case, so ~/library is ~/Library
-        if not explicit and root == home and parts and parts[0].casefold() == "library":
-            raise ToolError(f"Refusing {path}: ~/Library is off limits")
+        home = os.path.normcase(os.path.realpath(os.path.expanduser("~")))
+        if not explicit and base == home and parts and parts[0].casefold() in PRIVATE_HOME_DIRS:
+            raise ToolError(f"Refusing {path}: {PRIVATE_HOME_DIRS[parts[0].casefold()]} is off limits")
         return real
     raise ToolError(f"Refusing {path}: outside SLACK_FILE_ROOTS ({os.pathsep.join(roots)})")
 
 
+def dos_path(path: str) -> str:
+    r"""GetFinalPathNameByHandleW answers \\?\C:\x or \\?\UNC\server\share\x; os.path wants C:\x or \\server\share\x."""
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\" + path[7:]
+    return path[4:] if path.startswith("\\\\?\\") else path
+
+
+def _windows_fd_path(fd: int) -> str:
+    import msvcrt
+    from ctypes import wintypes
+
+    final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+    final_path.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    size = 512
+    while True:
+        buf = ctypes.create_unicode_buffer(size)
+        needed = final_path(msvcrt.get_osfhandle(fd), buf, size, 0)
+        if needed == 0:
+            raise ctypes.WinError(ctypes.get_last_error())
+        if needed < size:
+            return dos_path(buf.value)
+        size = needed  # the buffer was short: the answer is the size it needs
+
+
 def fd_path(fd: int) -> str:
-    """Where an open file or folder really is, to recheck it after opening (closes symlink races)."""
+    """Where an open file really is, to recheck it after opening (closes symlink races)."""
     try:
-        if hasattr(fcntl, "F_GETPATH"):
+        if fcntl and hasattr(fcntl, "F_GETPATH"):
             return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
+        if os.name == "nt":
+            return _windows_fd_path(fd)
         return os.readlink(f"/proc/self/fd/{fd}")
     except OSError:
         raise ToolError("Cannot tell where an opened file is on this system; refusing file access") from None
 
 
 def open_allowed(path: str, flags: int) -> int:
-    """Open a path inside the roots without following a final symlink, then recheck where it landed."""
+    """Open a file inside the roots without following a final symlink, then recheck where it landed."""
     real = allowed_path(path)
+    if os.path.isdir(real):
+        raise ToolError(f"Not a regular file: {path}")
     try:
-        fd = os.open(real, flags | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(real, flags | OPEN_FLAGS)
     except OSError as exc:
         raise ToolError(f"Cannot open {path}: {exc.strerror}") from None
     try:
@@ -64,19 +104,15 @@ def open_allowed(path: str, flags: int) -> int:
     return fd
 
 
-def make_allowed_dirs(path: str) -> None:
-    """mkdir -p, one level at a time through checked folder descriptors."""
+def make_allowed_dirs(path: str) -> str:
+    """mkdir -p, checking every level against the roots; returns the resolved folder. A folder swapped
+    for a link midway can only leave an empty folder behind: downloads recheck where the file landed."""
     real = allowed_path(path)
-    if os.path.isdir(real):
-        return
-    parent, name = os.path.split(real)
-    make_allowed_dirs(parent)
-    parent_fd = open_allowed(parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
+    if not os.path.isdir(real):
+        make_allowed_dirs(os.path.dirname(real))
         with contextlib.suppress(FileExistsError):
-            os.mkdir(name, dir_fd=parent_fd)
-    finally:
-        os.close(parent_fd)
+            os.mkdir(real)
+    return real
 
 
 def login_redirect(url: httpx.URL) -> bool:
@@ -235,17 +271,16 @@ def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloa
     final = f"{file_id}-{name}"
     part = f".{file_id}-{secrets.token_hex(8)}.part"
     headers = {"Authorization": f"Bearer {token(workspace)}"}
-    make_allowed_dirs(dest_dir)
-    dir_fd = open_allowed(dest_dir, os.O_RDONLY | os.O_DIRECTORY)
+    dest = part_dir = make_allowed_dirs(dest_dir)
 
-    # Every file operation goes through dir_fd, so swapping the folder for a symlink changes nothing.
     try:
-        dest = fd_path(dir_fd)
-        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+        fd = os.open(os.path.join(dest, part), os.O_WRONLY | os.O_CREAT | os.O_EXCL | OPEN_FLAGS, 0o600)
         with (
             os.fdopen(fd, "wb") as out,
             client().stream("GET", url, headers=headers, follow_redirects=True, timeout=300) as resp,
         ):
+            part_dir = os.path.dirname(fd_path(fd))
+            allowed_path(part_dir)  # the folder was not swapped for a link before the part file appeared
             # Without files:read Slack answers with its HTML login page instead of the file.
             html = "text/html" in resp.headers.get("content-type", "") and f.get("filetype") != "html"
             if resp.status_code != 200 or html or login_redirect(resp.url):
@@ -256,14 +291,18 @@ def slack_download_file(workspace: str, file_id: str, dest_dir: str = "~/Downloa
                 if written > MAX_FILE:
                     raise SlackError(f"Download of {file_id} exceeds {MAX_FILE} bytes")
                 out.write(chunk)
+            # The folder may have moved, or been swapped for a link, mid-transfer: rename next to where
+            # the part file really is now, and only inside the roots. The random part name cannot be
+            # found by a path that leads anywhere else.
+            part_dir = os.path.dirname(fd_path(fd))
+            dest = allowed_path(part_dir)
         if size is not None and written != size:
             raise SlackError(f"Download of {file_id} is incomplete: got {written} of {size} bytes")
-        os.replace(part, final, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        os.replace(os.path.join(dest, part), os.path.join(dest, final))
     except httpx.HTTPError as exc:
         raise SlackError(f"Slack download of {file_id} failed: {type(exc).__name__}") from None
     finally:
         with contextlib.suppress(FileNotFoundError):
-            os.unlink(part, dir_fd=dir_fd)
-        os.close(dir_fd)
+            os.unlink(os.path.join(part_dir, part))
     path = os.path.join(dest, final)
     return {"workspace": workspace_key(workspace), "file_id": file_id, "size": written, "path": path}
