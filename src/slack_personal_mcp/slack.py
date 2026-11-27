@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from .config import alias, workspace_tokens, write_channels
+from .config import TOKEN_PREFIX, alias, workspace_tokens, write_channels
 from .message_text import attachments_text, blocks_text
 
 SLACK = "https://slack.com/api"
@@ -74,8 +74,8 @@ def workspace_key(workspace: str) -> str:
     return alias(workspace)
 
 
-def token(workspace: str) -> str:
-    tokens = workspace_tokens()
+def token(workspace: str, prefix: str = TOKEN_PREFIX) -> str:
+    tokens = workspace_tokens(prefix)
     key = workspace_key(workspace)
     env_names = tokens.get(key)
     if not env_names:
