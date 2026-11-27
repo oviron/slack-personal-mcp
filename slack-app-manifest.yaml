@@ -45,6 +45,11 @@ oauth_config:
       - search:read.files
       - search:read.users
 settings:
+  # Only for the Claude Code channel: Slack sends the events below over Socket Mode to the one
+  # session that listens. Without an app-level token (xapp-) nothing connects.
+  event_subscriptions:
+    user_events:
+      - message.im
   org_deploy_enabled: false
-  socket_mode_enabled: false
+  socket_mode_enabled: true
   token_rotation_enabled: false

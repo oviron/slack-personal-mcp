@@ -86,3 +86,43 @@ main()
         "next_cursor": "",
         "has_more": False,
     }
+
+
+async def test_stdio_launch_as_channel_declares_capability(tmp_path):
+    """--channel adds claude/channel and instructions; without an app token the listener stays off, tools still work."""
+    env = {"PATH": os.environ["PATH"], "SLACK_ENV_FILE": os.devnull, "SLACK_USER_TOKEN_ACME": "xoxp-test"}
+    args = [str(ROOT / "server.py"), "--channel", "acme", "--channel-users", "U0FEDOR"]
+    params = StdioServerParameters(command=sys.executable, args=args, env=env, cwd=tmp_path)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        init = await session.initialize()
+        tools = await session.list_tools()
+    assert init.capabilities.experimental == {"claude/channel": {}}
+    assert "slack_send_message" in init.instructions
+    assert len(tools.tools) == 30
+
+
+async def test_stdio_launch_without_channel_has_no_capability(tmp_path):
+    env = {"PATH": os.environ["PATH"], "SLACK_ENV_FILE": os.devnull, "SLACK_USER_TOKEN_ACME": "xoxp-test"}
+    params = StdioServerParameters(command=sys.executable, args=[str(ROOT / "server.py")], env=env, cwd=tmp_path)
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        init = await session.initialize()
+    assert not init.capabilities.experimental
+    assert init.instructions is None
+
+
+def test_channel_without_allowlist_refuses_to_start(tmp_path):
+    import subprocess
+
+    from mcp.client.stdio import get_default_environment
+
+    env = {**get_default_environment(), "SLACK_ENV_FILE": os.devnull}
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "server.py"), "--channel", "acme"],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "--channel-users" in result.stderr

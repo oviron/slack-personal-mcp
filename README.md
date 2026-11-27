@@ -227,8 +227,80 @@ Without a clone, uv runs a tagged release straight from GitHub. There is no `ser
 next to it, so name the env file:
 
 ```bash
-SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.com/oviron/slack-personal-mcp@v0.2.3 slack-personal-mcp
+SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.com/oviron/slack-personal-mcp@v0.3.0 slack-personal-mcp
 ```
+
+## Claude Code channel
+
+The server can also push Slack messages into a running Claude Code session as a
+[channel](https://code.claude.com/docs/en/channels-reference): a message from an allowlisted
+person arrives as
+
+```
+<channel source="slack-channel" workspace="acme" channel_id="D0123" user_id="U0456" user_name="Jane" ts="1729612345.123456">text</channel>
+```
+
+and the agent answers with `slack_send_message`, the same tool and checks as always. The
+channel is off unless the process is started with `--channel`, so the usual registration in
+every client stays exactly as it was.
+
+**Slack app.** In the app's settings turn on **Socket Mode**, create an app-level token with
+`connections:write` (**Basic Information → App-Level Tokens**), and under **Event
+Subscriptions → Subscribe to events on behalf of users** add `message.im` (the manifest already
+has both). Reinstall the app, then add the token next to the user token:
+
+```dotenv
+SLACK_APP_TOKEN_ACME=xapp-...
+```
+
+**One listening session.** Slack hands each event to just one of the app's open Socket Mode
+connections, so only one process may listen. Give the channel its own server entry and load it
+only in the session that should receive messages, for example
+`~/.config/slack-personal-mcp/channel.json`:
+
+```json
+{
+  "mcpServers": {
+    "slack-channel": {
+      "command": "/path/to/slack-personal-mcp/.venv/bin/python",
+      "args": ["/path/to/slack-personal-mcp/server.py", "--channel", "acme", "--channel-users", "U0456"]
+    }
+  }
+}
+```
+
+```bash
+claude --mcp-config ~/.config/slack-personal-mcp/channel.json --dangerously-load-development-channels server:slack-channel
+```
+
+Custom channels are not on Claude Code's channel allowlist, so they load only through
+`--dangerously-load-development-channels`, which asks for confirmation at start. On Team and
+Enterprise plans an owner has to turn channels on first. A second listener for the same workspace on the
+same machine and user account stays off (the lock lives in the user cache folder); on other machines, keep the app token on one of them only.
+
+| Option | Meaning |
+|---|---|
+| `--channel <alias>` | Listen in this workspace; needs `SLACK_APP_TOKEN_<ALIAS>` |
+| `--channel-users <ids>` | Required. Comma-separated `U...` ids whose messages are forwarded |
+| `--channel-conversations <ids>` | Comma-separated `D...`, `C...` or `G...` ids to forward from; default is DMs only. Other conversation types need their `message.*` user event |
+
+**What reaches the session.** Only new messages and file shares written by an allowlisted
+person, in your own DM with that person or in a listed conversation you are a member of, in the
+expected workspace. Socket Mode carries events for every installation of the app, so each
+conversation is checked with your user token (`conversations.info`, cached for a minute): a DM
+from the same person to someone else who installed it never passes, and a channel you leave
+stops forwarding within a minute. Listening never opens or creates a conversation. Your own messages, bot messages, edits and deletions are dropped. The session gets the
+text as written, links included, cut at 4,000 characters, plus file names, ids and timestamps;
+raw events, tokens, socket URLs and file links are never forwarded or logged. Messages from an
+allowlisted person are still untrusted input: the server tells the agent to treat them as
+data, and sending stays behind the client's approval.
+
+**Delivery.** Every envelope is acknowledged at once, so Slack does not resend it, and
+redeliveries are dropped. Delivery is best effort: up to 100 messages wait while the session is
+busy, and beyond that, or if the process stops, an acknowledged message is lost (it is still in
+Slack). The listener starts after the MCP handshake and logs its state to stderr (Claude Code's
+MCP log). A token, scope or Socket Mode problem stops the listener but not the server; network
+drops and Slack's periodic refresh reconnect with backoff.
 
 ## Troubleshooting
 
@@ -241,6 +313,7 @@ SLACK_ENV_FILE=~/.config/slack-personal-mcp/.env uvx --from git+https://github.c
 | `token_expired` | Token rotation is on and cannot be turned off: create a new app from the manifest and use its token |
 | `ratelimited` | The server already waited for `Retry-After` within 30 seconds; try again later |
 | `outcome unknown` | A send failed after it left your machine and was not retried; check the channel before sending again |
+| `Slack channel off` in the MCP log | Check `SLACK_APP_TOKEN_<ALIAS>`, Socket Mode and the `message.im` user event; the line says what failed |
 | `feature_not_enabled` from `slack_search` | Real-time Search is not available in this workspace; use `slack_search_messages` |
 
 Changes to the code or `.env` take effect when the client restarts the server.

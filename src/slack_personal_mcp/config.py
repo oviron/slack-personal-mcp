@@ -5,6 +5,7 @@ import tempfile
 from dotenv import load_dotenv
 
 TOKEN_PREFIX = "SLACK_USER_TOKEN_"
+APP_TOKEN_PREFIX = "SLACK_APP_TOKEN_"
 OFF = ("0", "off", "false", "no")
 
 
@@ -19,11 +20,11 @@ def alias(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
 
 
-def workspace_tokens() -> dict[str, tuple[str, ...]]:
+def workspace_tokens(prefix: str = TOKEN_PREFIX) -> dict[str, tuple[str, ...]]:
     """Every SLACK_USER_TOKEN_<ALIAS> is a workspace: ACME_CORP -> acme-corp. Several names may collide."""
     out: dict[str, tuple[str, ...]] = {}
     for name in sorted(os.environ):
-        if name.startswith(TOKEN_PREFIX) and (key := alias(name[len(TOKEN_PREFIX) :])):
+        if name.startswith(prefix) and (key := alias(name[len(prefix) :])):
             out[key] = out.get(key, ()) + (name,)
     return out
 
