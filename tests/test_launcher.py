@@ -113,7 +113,9 @@ async def test_stdio_launch_without_channel_has_no_capability(tmp_path):
 def test_channel_without_allowlist_refuses_to_start(tmp_path):
     import subprocess
 
-    env = {"PATH": os.environ["PATH"], "SLACK_ENV_FILE": os.devnull}
+    from mcp.client.stdio import get_default_environment
+
+    env = {**get_default_environment(), "SLACK_ENV_FILE": os.devnull}
     result = subprocess.run(
         [sys.executable, str(ROOT / "server.py"), "--channel", "acme"],
         env=env,
