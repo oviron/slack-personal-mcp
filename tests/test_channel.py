@@ -24,7 +24,6 @@ ME = "U0ME"
 TEAM = "T0TEAM"
 MY_DM = "D0DM"
 CONFIG = ChannelConfig(workspace="acme", users=frozenset({FEDOR}))
-ALLOWED = frozenset({MY_DM})
 
 
 def payload(event_id="Ev1", team=TEAM, **event):
@@ -41,8 +40,8 @@ def payload(event_id="Ev1", team=TEAM, **event):
     }
 
 
-def accept(body, config=CONFIG, allowed=ALLOWED):
-    return to_channel_event(body, config, ME, TEAM, allowed)
+def accept(body, config=CONFIG):
+    return to_channel_event(body, config, ME, TEAM)
 
 
 # parse_args
@@ -84,11 +83,6 @@ def test_allowlisted_dm_becomes_event_without_raw_payload():
     assert "legacy-verification-token" not in repr(event)
 
 
-def test_allowlisted_person_writing_to_another_installer_is_dropped():
-    """Socket Mode delivers events of every installation; only the owner's own DM with the sender passes."""
-    assert accept(payload(channel="D0SOMEONEELSE", authorizations=[{"user_id": "U0OTHER"}])) is None
-
-
 @pytest.mark.parametrize(
     "change",
     [
@@ -116,10 +110,11 @@ def test_non_callback_payload_dropped():
     assert accept({**payload(), "type": "url_verification"}) is None
 
 
-def test_listed_conversation_passes():
-    body = payload(channel="C0TEAM", channel_type="channel")
-    assert accept(body, allowed=frozenset({"C0TEAM"})) is not None
-    assert accept(body) is None
+def test_listed_conversation_replaces_dm_default():
+    config = ChannelConfig("acme", frozenset({FEDOR}), frozenset({"C0TEAM"}))
+    assert accept(payload(channel="C0TEAM", channel_type="channel"), config) is not None
+    assert accept(payload(), config) is None
+    assert accept(payload(channel="C0TEAM", channel_type="channel")) is None
 
 
 def test_thread_file_and_long_text():
@@ -202,12 +197,22 @@ def envelope(n, body):
     return {"type": "events_api", "envelope_id": f"env{n}", "payload": body}
 
 
+def conversation_info(known):
+    def reply(request):
+        channel_id = request.url.params["channel"]
+        if channel_id not in known:
+            return httpx.Response(200, json={"ok": False, "error": "channel_not_found"})
+        return httpx.Response(200, json={"ok": True, "channel": {"id": channel_id, **known[channel_id]}})
+
+    return reply
+
+
 @pytest.fixture
 def slack_identity(slack, monkeypatch):
     monkeypatch.setenv("SLACK_APP_TOKEN_ACME", "xapp-test")
     monkeypatch.setattr(channel, "lock_dir", lambda: str(slack.tmp))
     slack.on("auth.test", {"ok": True, "user_id": ME, "team_id": TEAM})
-    slack.on("conversations.open", {"ok": True, "channel": {"id": MY_DM}})
+    slack.on("conversations.info", conversation_info({MY_DM: {"is_im": True, "user": FEDOR}}))
     slack.on("users.info", {"ok": True, "user": {"profile": {"real_name": "Fedor"}}})
     return slack
 
@@ -278,8 +283,7 @@ async def test_acks_every_envelope_and_emits_allowed_once(slack_identity):
     assert socket.sent == [{"envelope_id": f"env{n}"} for n in (1, 2, 3, 4, 5)]
     assert [e.content for e in emitted] == ["hi", "second"]
     assert emitted[0].meta["user_name"] == "Fedor"
-    assert listener.conversations == ALLOWED
-    assert slack_identity.calls("conversations.open")[0].content == b"users=U0FEDOR"
+    assert slack_identity.calls("conversations.open") == []  # listening never creates a DM
 
 
 @pytest.mark.anyio
@@ -376,7 +380,7 @@ async def test_temporary_auth_failure_is_retried(slack_identity):
 
     def flaky(request):
         attempts.append(True)
-        if len(attempts) == 1:
+        if len(attempts) <= 3:  # more than slack.call retries by itself
             return httpx.Response(503, text="busy")
         return httpx.Response(200, json={"ok": True, "user_id": ME, "team_id": TEAM})
 
@@ -389,7 +393,7 @@ async def test_temporary_auth_failure_is_retried(slack_identity):
     socket = FakeSocket([{"type": "hello"}, envelope(1, payload())])
     listener, _ = listener_with([socket], emit)
     await run_until(listener, done)
-    assert len(attempts) >= 2
+    assert len(attempts) >= 4
 
 
 @pytest.mark.anyio
@@ -401,7 +405,6 @@ async def test_listed_conversation_must_be_readable(slack_identity):
     ready.set()
     with anyio.fail_after(5):
         await listener.run(ready)  # stops instead of listening
-    assert listener.conversations == frozenset()
 
 
 @pytest.mark.anyio
@@ -431,6 +434,107 @@ async def test_apps_connections_open_uses_app_token(slack_identity):
     assert await listener._apps_connections_open() == "wss://wss.slack.com/link?ticket=t"
     request = slack_identity.calls("apps.connections.open")[0]
     assert request.headers["Authorization"] == "Bearer xapp-test"
+
+
+def emitted_into(collected, done, count=1):
+    async def emit(event):
+        collected.append(event)
+        if len(collected) >= count:
+            done.set()
+
+    return emit
+
+
+@pytest.mark.anyio
+async def test_dm_of_another_installer_never_reaches_the_session(slack_identity):
+    """Socket Mode carries every installation's events: the same sender writing to someone else is not ours."""
+    slack_identity.on(
+        "conversations.info",
+        conversation_info({MY_DM: {"is_im": True, "user": FEDOR}, "D0FAKE": {"is_im": True, "user": "U0OTHER"}}),
+    )
+    emitted, done = [], anyio.Event()
+    socket = FakeSocket(
+        [
+            {"type": "hello"},
+            envelope(1, payload("Ev1", channel="D0SOMEONEELSE")),  # not visible to the owner at all
+            envelope(2, payload("Ev2", channel="D0FAKE")),  # visible, but a DM with somebody else
+            envelope(3, payload("Ev3", text="mine")),
+        ]
+    )
+    listener, _ = listener_with([socket], emitted_into(emitted, done))
+    await run_until(listener, done)
+    assert [e.content for e in emitted] == ["mine"]
+
+
+@pytest.mark.anyio
+async def test_lost_access_to_listed_channel_stops_forwarding(slack_identity, monkeypatch):
+    monkeypatch.setattr(channel, "ACCESS_TTL", 0.0)
+    member = {"C0TEAM": {"is_member": True}}
+    slack_identity.on("conversations.info", conversation_info(member))
+    config = ChannelConfig("acme", frozenset({FEDOR}), frozenset({"C0TEAM"}))
+    emitted, first, second = [], anyio.Event(), anyio.Event()
+
+    async def emit(event):
+        emitted.append(event)
+        first.set()
+
+    def body(n, text):
+        return envelope(n, payload(f"Ev{n}", channel="C0TEAM", channel_type="channel", text=text))
+
+    gate = anyio.Event()
+
+    class GatedSocket(FakeSocket):
+        async def __anext__(self):
+            if len(self.sent) == 1:
+                await gate.wait()
+            if not self.frames:
+                second.set()
+                await anyio.sleep_forever()
+            return await super().__anext__()
+
+    socket = GatedSocket([{"type": "hello"}, body(1, "before"), body(2, "after")])
+    listener = SocketModeListener(config, emit, connect=lambda url: socket, open_url=_url)
+    ready = anyio.Event()
+    ready.set()
+    with anyio.fail_after(5):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(listener.run, ready)
+            await first.wait()
+            member["C0TEAM"] = {"is_member": False}
+            gate.set()
+            await second.wait()
+            await anyio.sleep(0.05)
+            tg.cancel_scope.cancel()
+    assert [e.content for e in emitted] == ["before"]
+
+
+async def _url():
+    return "wss://example"
+
+
+@pytest.mark.anyio
+async def test_drop_after_a_long_healthy_socket_reconnects_fast(slack_identity, monkeypatch):
+    monkeypatch.setattr(channel, "STABLE", 0.0)
+    waits = []
+
+    async def record(seconds):
+        waits.append(seconds)
+        if len(waits) >= 3:
+            await anyio.sleep_forever()
+
+    class DroppingSocket(FakeSocket):
+        async def __anext__(self):
+            if not self.frames:
+                raise ConnectionResetError
+            return await super().__anext__()
+
+    monkeypatch.setattr(channel, "_pause", record)
+    listener, _ = listener_with([DroppingSocket([{"type": "hello"}]) for _ in range(5)], lambda e: None)
+    ready = anyio.Event()
+    ready.set()
+    with anyio.move_on_after(1):
+        await listener.run(ready)
+    assert waits[:3] == [1.0, 1.0, 1.0]
 
 
 # The MCP side: capability, handshake, wire format, shutdown

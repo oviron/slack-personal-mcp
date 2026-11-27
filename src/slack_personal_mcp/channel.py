@@ -41,6 +41,7 @@ FATAL_ERRORS = {
     "missing_scope",
     "channel_not_found",
 }
+ACCESS_TTL = 60.0
 STABLE = 30.0  # seconds a socket must stay up before the reconnect backoff starts over
 
 INSTRUCTIONS = (
@@ -97,14 +98,11 @@ def parse_args(argv: list[str]) -> ChannelConfig | None:
     return ChannelConfig(workspace=workspace, users=users, conversations=conversations)
 
 
-def to_channel_event(
-    payload: dict, config: ChannelConfig, own_user_id: str, team_id: str, conversations: frozenset[str]
-) -> ChannelEvent | None:
-    """The one place that decides what reaches the session. Returns None for anything not explicitly allowed.
+def to_channel_event(payload: dict, config: ChannelConfig, own_user_id: str, team_id: str) -> ChannelEvent | None:
+    """First gate, on the event alone: returns None for anything not explicitly allowed.
 
-    `conversations` are ids resolved with the owner's own token: the owner's DMs with the allowlisted people, or
-    the listed conversations the owner can read. Socket Mode carries events for every installation of the app, so
-    an allowlisted person's DM to another installer must not pass on the sender alone."""
+    It cannot tell whose conversation an event belongs to: Socket Mode carries events of every installation of
+    the app. SocketModeListener.owner_can_see checks that with the owner's own token before anything is pushed."""
     if payload.get("type") != "event_callback" or payload.get("team_id") != team_id:
         return None
     event = payload.get("event")
@@ -118,7 +116,10 @@ def to_channel_event(
         return None
     if user == own_user_id or user not in config.users:
         return None
-    if channel not in conversations:
+    if config.conversations:
+        if channel not in config.conversations:
+            return None
+    elif event.get("channel_type") != "im" or not channel.startswith("D"):
         return None
 
     text = event.get("text") if isinstance(event.get("text"), str) else ""
@@ -193,7 +194,14 @@ def single_listener(team_id: str, directory: str | None = None):
         except OSError:
             yield False
             return
-        yield True
+        try:
+            yield True
+        finally:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
     finally:
         handle.close()
 
@@ -220,7 +228,8 @@ class SocketModeListener:
         self.dropped = 0
         self.own_user_id = ""
         self.team_id = ""
-        self.conversations: frozenset[str] = frozenset()
+        self._access: dict[tuple[str, str], tuple[float, bool]] = {}
+        self._hello_at: float | None = None
 
     async def _apps_connections_open(self) -> str:
         return await _thread(apps_connections_open, self.config.workspace)
@@ -242,12 +251,8 @@ class SocketModeListener:
             if not held:
                 log.warning("Slack channel off: another process on this machine already listens to this workspace")
                 return
-            log.info(
-                "Slack channel on for %s: %d sender(s), %d conversation(s)",
-                self.config.workspace,
-                len(self.config.users),
-                len(self.conversations),
-            )
+            where = f"{len(self.config.conversations)} conversation(s)" if self.config.conversations else "DMs"
+            log.info("Slack channel on for %s: %d sender(s), %s", self.config.workspace, len(self.config.users), where)
             async with anyio.create_task_group() as tg:
                 tg.start_soon(self._deliver)
                 try:
@@ -257,48 +262,73 @@ class SocketModeListener:
                 tg.cancel_scope.cancel()
 
     async def _identify(self) -> None:
-        """Who the owner is, and which conversations may push: resolved with the owner's own user token."""
+        """Who the owner is; listed conversations must be readable with the owner's token from the start."""
         workspace = self.config.workspace
         identity = await _thread(call, "auth.test", workspace=workspace)
         self.own_user_id, self.team_id = identity.get("user_id", ""), identity.get("team_id", "")
         if not self.own_user_id or not self.team_id:
             raise StopListener("auth.test did not name the user and workspace")
-        if self.config.conversations:
-            for conversation in sorted(self.config.conversations):
-                await _thread(call, "conversations.info", workspace=workspace, params={"channel": conversation})
-            self.conversations = self.config.conversations
-        else:
-            dms = set()
-            for user in sorted(self.config.users):
-                data = await _thread(call, "conversations.open", workspace=workspace, form={"users": user})
-                dms.add(data["channel"]["id"])
-            self.conversations = frozenset(dms)
+        for conversation in sorted(self.config.conversations):
+            if not await self._owner_sees(conversation, None):
+                raise StopListener(f"{conversation} is not readable with your token")
+
+    async def owner_can_see(self, event: ChannelEvent) -> bool:
+        """Second gate: the conversation is the owner's DM with the sender, or a listed one the owner is in.
+
+        Checked with the owner's token and cached for a minute, so a DM opened after start works and lost access
+        stops forwarding within a minute."""
+        key = (event.meta["channel_id"], event.meta["user_id"])
+        cached = self._access.get(key)
+        if cached is not None and cached[0] > time.monotonic():
+            return cached[1]
+        allowed = await self._owner_sees(*key)
+        self._access[key] = (time.monotonic() + ACCESS_TTL, allowed)
+        return allowed
+
+    async def _owner_sees(self, conversation: str, sender: str | None) -> bool:
+        try:
+            data = await _thread(
+                call, "conversations.info", workspace=self.config.workspace, params={"channel": conversation}
+            )
+        except SlackError as exc:
+            if exc.error in ("channel_not_found", "not_in_channel", "missing_scope"):
+                return False
+            raise
+        info = data.get("channel") or {}
+        if info.get("is_im"):
+            return sender is None or info.get("user") == sender
+        return bool(info.get("is_member"))
 
     async def _retrying(self, step: Callable[[], Awaitable[object]], *, forever: bool = False) -> None:
         """Run step until it succeeds (or, with forever, keep rerunning it), backing off on temporary failures."""
         delay = 1.0
         while True:
-            started = time.monotonic()
+            self._hello_at = None
+            retry_after = None
             try:
                 await step()
                 if not forever:
                     return
-                wait = 0.0 if time.monotonic() - started >= STABLE else delay
+                problem = None
             except StopListener:
                 raise
             except SlackError as exc:
                 if exc.error in FATAL_ERRORS:
                     raise StopListener(str(exc)) from None
-                wait = exc.retry_after if exc.retry_after is not None else delay
-                log.warning("Slack channel: %s; retrying in %.0fs", exc, wait)
+                problem, retry_after = str(exc), exc.retry_after
             except Exception as exc:  # network errors, and websockets' ConnectionClosed family
-                wait = delay
-                log.warning("Slack channel: connection problem (%s); retrying in %.0fs", type(exc).__name__, wait)
+                problem = f"connection problem ({type(exc).__name__})"
+            # A socket that worked for a while ends in a refresh or a fresh drop, not a failing link: start over.
+            if self._hello_at is not None and time.monotonic() - self._hello_at >= STABLE:
+                delay = 1.0
+                wait = retry_after or (1.0 if problem else 0.0)
+            else:
+                wait = retry_after or delay
+                delay = min(delay * 2, BACKOFF_MAX)
+            if problem:
+                log.warning("Slack channel: %s; retrying in %.0fs", problem, wait)
             if wait:
                 await _pause(wait + random.uniform(0, wait / 4))
-                delay = min(delay * 2, BACKOFF_MAX)
-            else:
-                delay = 1.0
 
     async def _session(self) -> None:
         """One socket until Slack closes or refreshes it."""
@@ -311,6 +341,7 @@ class SocketModeListener:
                     continue
                 kind = envelope.get("type")
                 if kind == "hello":
+                    self._hello_at = time.monotonic()
                     log.info("Slack channel connected")
                 elif kind == "disconnect":
                     reason = envelope.get("reason")
@@ -325,7 +356,7 @@ class SocketModeListener:
                         self._accept(envelope["payload"])
 
     def _accept(self, payload: dict) -> None:
-        event = to_channel_event(payload, self.config, self.own_user_id, self.team_id, self.conversations)
+        event = to_channel_event(payload, self.config, self.own_user_id, self.team_id)
         if event is None or not self._deduper.first_time(event.event_id):
             return
         try:
@@ -336,6 +367,12 @@ class SocketModeListener:
 
     async def _deliver(self) -> None:
         async for event in self._receive:
+            try:
+                if not await self.owner_can_see(event):
+                    continue
+            except SlackError as exc:
+                log.warning("Slack channel: dropped a message, cannot check the conversation (%s)", exc)
+                continue
             meta = dict(event.meta)
             if name := await _thread(_user_name, self.config.workspace, meta["user_id"]):
                 meta["user_name"] = name
@@ -395,11 +432,12 @@ def _json(raw) -> dict | None:
 def _websockets_connect():
     from websockets.asyncio.client import connect
 
-    # websockets logs the request path (with the ticket) and frames at DEBUG; keep it out of any log.
-    logging.getLogger("websockets").setLevel(logging.WARNING)
+    # websockets logs the request path (with the ticket) and every frame at DEBUG: give it a logger that never does.
+    quiet = logging.getLogger("slack_personal_mcp.channel.socket")
+    quiet.setLevel(logging.WARNING)
 
     def open_socket(url: str):
-        return connect(url, open_timeout=15, ping_interval=30, ping_timeout=30, max_size=2**20)
+        return connect(url, open_timeout=15, ping_interval=30, ping_timeout=30, max_size=2**20, logger=quiet)
 
     return open_socket
 

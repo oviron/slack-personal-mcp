@@ -276,7 +276,7 @@ claude --mcp-config ~/.config/slack-personal-mcp/channel.json --dangerously-load
 Custom channels are not on Claude Code's channel allowlist, so they load only through
 `--dangerously-load-development-channels`, which asks for confirmation at start. On Team and
 Enterprise plans an owner has to turn channels on first. A second listener for the same workspace on the
-same machine stays off; on other machines, keep the app token on one of them only.
+same machine and user account stays off (the lock lives in the user cache folder); on other machines, keep the app token on one of them only.
 
 | Option | Meaning |
 |---|---|
@@ -285,10 +285,11 @@ same machine stays off; on other machines, keep the app token on one of them onl
 | `--channel-conversations <ids>` | Comma-separated `D...`, `C...` or `G...` ids to forward from; default is DMs only. Other conversation types need their `message.*` user event |
 
 **What reaches the session.** Only new messages and file shares written by an allowlisted
-person, in your own DM with that person (resolved at start with your user token) or in a listed
-conversation you can read, in the expected workspace. Socket Mode carries events for every
-installation of the app, so a DM from the same person to someone else who installed it never
-passes. Your own messages, bot messages, edits and deletions are dropped. The session gets the
+person, in your own DM with that person or in a listed conversation you are a member of, in the
+expected workspace. Socket Mode carries events for every installation of the app, so each
+conversation is checked with your user token (`conversations.info`, cached for a minute): a DM
+from the same person to someone else who installed it never passes, and a channel you leave
+stops forwarding within a minute. Listening never opens or creates a conversation. Your own messages, bot messages, edits and deletions are dropped. The session gets the
 text as written, links included, cut at 4,000 characters, plus file names, ids and timestamps;
 raw events, tokens, socket URLs and file links are never forwarded or logged. Messages from an
 allowlisted person are still untrusted input: the server tells the agent to treat them as
