@@ -230,6 +230,7 @@ class SocketModeListener:
         self.team_id = ""
         self._access: dict[tuple[str, str], tuple[float, bool]] = {}
         self._hello_at: float | None = None
+        self._names: dict[str, str] = {}
 
     async def _apps_connections_open(self) -> str:
         return await _thread(apps_connections_open, self.config.workspace)
@@ -367,16 +368,23 @@ class SocketModeListener:
 
     async def _deliver(self) -> None:
         async for event in self._receive:
+            meta = dict(event.meta)
+            if name := await self._name(meta["user_id"]):
+                meta["user_name"] = name
+            # Checked last, right before the push, so a cached decision is never older than ACCESS_TTL when used.
+            # A rate-limited check holds the queue in order rather than reordering or skipping ahead.
             try:
                 if not await self.owner_can_see(event):
                     continue
             except SlackError as exc:
                 log.warning("Slack channel: dropped a message, cannot check the conversation (%s)", exc)
                 continue
-            meta = dict(event.meta)
-            if name := await _thread(_user_name, self.config.workspace, meta["user_id"]):
-                meta["user_name"] = name
             await self.emit(ChannelEvent(event.event_id, event.content, meta))
+
+    async def _name(self, user_id: str) -> str:
+        if user_id not in self._names:
+            self._names[user_id] = await _thread(_user_name, self.config.workspace, user_id)
+        return self._names[user_id]
 
 
 async def _pause(seconds: float) -> None:
