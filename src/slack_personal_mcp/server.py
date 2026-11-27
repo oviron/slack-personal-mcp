@@ -45,17 +45,19 @@ async def run_with_channel(config: ChannelConfig, streams=None) -> None:
 
     server.notification_handlers[types.InitializedNotification] = on_initialized
 
-    async with (stdio_server() if streams is None else contextlib.nullcontext(streams)) as (read_stream, write_stream):
+    async with stdio_server() if streams is None else contextlib.nullcontext(streams) as (read_stream, write_stream):
 
         async def emit(event: ChannelEvent) -> None:
             notification = types.JSONRPCNotification(
                 jsonrpc="2.0", method=NOTIFICATION, params={"content": event.content, "meta": event.meta}
             )
-            await write_stream.send(SessionMessage(types.JSONRPCMessage(notification)))
+            try:
+                await write_stream.send(SessionMessage(types.JSONRPCMessage(notification)))
+            except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+                pass  # the client is gone; server.run is returning and cancels the listener
 
         listener = SocketModeListener(config, emit)
         async with anyio.create_task_group() as tg:
             tg.start_soon(listener.run, ready)
             await server.run(read_stream, write_stream, options)
             tg.cancel_scope.cancel()
-

@@ -116,7 +116,11 @@ def test_channel_without_allowlist_refuses_to_start(tmp_path):
     env = {"PATH": os.environ["PATH"], "SLACK_ENV_FILE": os.devnull}
     result = subprocess.run(
         [sys.executable, str(ROOT / "server.py"), "--channel", "acme"],
-        env=env, cwd=tmp_path, capture_output=True, text=True, timeout=30,
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 2
     assert "--channel-users" in result.stderr

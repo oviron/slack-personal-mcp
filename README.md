@@ -275,8 +275,8 @@ claude --mcp-config ~/.config/slack-personal-mcp/channel.json --dangerously-load
 
 Custom channels are not on Claude Code's channel allowlist, so they load only through
 `--dangerously-load-development-channels`, which asks for confirmation at start. On Team and
-Enterprise plans an owner has to turn channels on first. A second listener on the same machine
-with the same app token stays off; on other machines, keep the app token on one of them only.
+Enterprise plans an owner has to turn channels on first. A second listener for the same workspace on the
+same machine stays off; on other machines, keep the app token on one of them only.
 
 | Option | Meaning |
 |---|---|
@@ -284,16 +284,21 @@ with the same app token stays off; on other machines, keep the app token on one 
 | `--channel-users <ids>` | Required. Comma-separated `U...` ids whose messages are forwarded |
 | `--channel-conversations <ids>` | Comma-separated `D...`, `C...` or `G...` ids to forward from; default is DMs only. Other conversation types need their `message.*` user event |
 
-**What reaches the session.** Only new messages and file shares written by an allowlisted person
-in an allowed conversation of the expected workspace, never your own, bot messages, edits or
-deletions. The session gets the text (cut at 4,000 characters), file names, ids and timestamps;
-raw events, tokens, socket URLs and file links are never forwarded or logged. Every envelope is
-acknowledged at once, so Slack does not resend it, and redeliveries are dropped. Messages from
-an allowlisted person are still untrusted input: the server tells the agent to treat them as
+**What reaches the session.** Only new messages and file shares written by an allowlisted
+person, in your own DM with that person (resolved at start with your user token) or in a listed
+conversation you can read, in the expected workspace. Socket Mode carries events for every
+installation of the app, so a DM from the same person to someone else who installed it never
+passes. Your own messages, bot messages, edits and deletions are dropped. The session gets the
+text as written, links included, cut at 4,000 characters, plus file names, ids and timestamps;
+raw events, tokens, socket URLs and file links are never forwarded or logged. Messages from an
+allowlisted person are still untrusted input: the server tells the agent to treat them as
 data, and sending stays behind the client's approval.
 
-The listener starts after the MCP handshake and logs its state to stderr (Claude Code's MCP
-log). A token, scope or Socket Mode problem stops the listener but not the server; network
+**Delivery.** Every envelope is acknowledged at once, so Slack does not resend it, and
+redeliveries are dropped. Delivery is best effort: up to 100 messages wait while the session is
+busy, and beyond that, or if the process stops, an acknowledged message is lost (it is still in
+Slack). The listener starts after the MCP handshake and logs its state to stderr (Claude Code's
+MCP log). A token, scope or Socket Mode problem stops the listener but not the server; network
 drops and Slack's periodic refresh reconnect with backoff.
 
 ## Troubleshooting
